@@ -3,5 +3,5 @@ pandas
 numpy
 yfinance
 plotly
-pandas-ta
+pandas-ta==0.3.14b0
 requests
