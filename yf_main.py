@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import datetime
@@ -34,7 +35,7 @@ logger.info("Starting application...")
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Pandas version: {pd.__version__}")
 logger.info(f"NumPy version: {np.__version__}")
-logger.info(f"Plotly version: {go.__version__}")
+logger.info(f"Plotly version: {plotly.__version__}")
 logger.info(f"YFinance version: {yf.__version__ if hasattr(yf, '__version__') else 'unknown'}")
 
 # Set page config with error capture
