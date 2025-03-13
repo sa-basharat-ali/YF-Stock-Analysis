@@ -675,15 +675,20 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
             except Exception as e:
                 logger.error(f"Error updating candle with tick: {e}")
         
+        # Ensure we have the required columns
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in frame.columns for col in required_columns):
+            logger.error("Missing required columns in frame")
+            return pd.DataFrame()
+            
         # Calculate indicators when needed
-        indicator_cols = ['MACD_7_25_9', 'MACDs_7_25_9', 'MACDh_7_25_9', 'RSI_6']
-        
         if len(frame) >= 26:  # Only calculate if we have enough data points
             try:
                 # Calculate MACD
                 macd_data = calculate_macd(frame)
                 if not macd_data.empty:
-                    frame = pd.concat([frame, macd_data], axis=1)
+                    for col in macd_data.columns:
+                        frame[col] = macd_data[col]
                 
                 # Calculate RSI
                 rsi_data = calculate_rsi(frame)
@@ -694,6 +699,8 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
                 frame = frame.ffill().bfill()
             except Exception as e:
                 logger.error(f"Error calculating indicators in animation frame: {e}")
+                # Don't return empty frame, continue with price data only
+                pass
         
         return frame
         
@@ -704,166 +711,114 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
 # Create Interactive Chart
 def create_interactive_chart(data, ticker, interval, is_animation_frame=False, last_price=None, last_tick_time=None):
     if data is None or data.empty or len(data) < 2:
-        # Only show error in non-animation mode to avoid flooding
         if not is_animation_frame:
             st.warning("Waiting for sufficient data to create chart...")
         return go.Figure()
 
-    has_indicators = all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'RSI_6'])
-
-    # Create figure with subplots
     try:
+        # Create figure with subplots
         fig = make_subplots(rows=3, cols=1, 
-                            specs=[[{"type": "candlestick"}],
-                                   [{"type": "bar"}],
-                                   [{"type": "scatter"}]],
-                            vertical_spacing=0.15,
-                            subplot_titles=('Candlestick', 'Volume', 'Indicators'))
-        
+                          specs=[[{"type": "candlestick"}],
+                                [{"type": "bar"}],
+                                [{"type": "scatter"}]],
+                          vertical_spacing=0.15,
+                          subplot_titles=('Candlestick', 'Volume', 'Indicators'),
+                          row_heights=[0.5, 0.2, 0.3])
+
         # Candlestick Chart (Row 1)
-        fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], 
-                                     low=data['Low'], close=data['Close'], 
-                                     increasing_line_color='#00FF00',  # Bright green
-                                     decreasing_line_color='#FF4040',  # Vibrant red
-                                     name="Price"),
-                      row=1, col=1)
-        
-        # Add the current price line if we're animating
-        if is_animation_frame and last_price is not None and last_tick_time is not None:
-            # Add a price line that extends to the right
-            fig.add_trace(go.Scatter(
-                x=[data.index[-1], last_tick_time], 
-                y=[data['Close'].iloc[-1], last_price],
-                mode='lines',
-                line=dict(color='#FFFFFF', width=1, dash='dot'),
-                showlegend=False
-            ), row=1, col=1)
-            
-            # Add the last price as a marker
-            fig.add_trace(go.Scatter(
-                x=[last_tick_time],
-                y=[last_price],
-                mode='markers',
-                marker=dict(
-                    color='#FFFFFF',
-                    size=8,
-                    line=dict(color='#000000', width=1)
-                ),
-                showlegend=False
-            ), row=1, col=1)
-            
-            # Add price label
-            fig.add_annotation(
-                x=last_tick_time,
-                y=last_price,
-                text=f"${last_price:.2f}",
-                showarrow=True,
-                arrowhead=0,
-                arrowcolor="#FFFFFF",
-                arrowsize=0.3,
-                arrowwidth=1,
-                ax=40,
-                ay=0,
-                font=dict(color="#FFFFFF", size=12),
-                bgcolor="#000000",
-                bordercolor="#FFFFFF",
-                borderwidth=1,
-                borderpad=4,
-                opacity=0.8
-            )
+        candlestick = go.Candlestick(
+            x=data.index,
+            open=data['Open'],
+            high=data['High'],
+            low=data['Low'],
+            close=data['Close'],
+            increasing_line_color='#00FF00',
+            decreasing_line_color='#FF4040',
+            name="Price"
+        )
+        fig.add_trace(candlestick, row=1, col=1)
 
         # Volume Chart (Row 2)
-        volume_colors = []
-        for i in range(len(data)):
-            open_price = float(data['Open'].iloc[i])
-            close_price = float(data['Close'].iloc[i])
-            volume_colors.append('#00CED1' if open_price <= close_price  # Neon teal
-                                 else '#FF7F50')  # Coral
-        fig.add_trace(go.Bar(x=data.index, y=data['Volume'], marker=dict(color=volume_colors), 
-                             opacity=0.7, name='Volume'),
-                      row=2, col=1)
+        colors = ['#00CED1' if row['Close'] >= row['Open'] else '#FF7F50' for _, row in data.iterrows()]
+        volume = go.Bar(
+            x=data.index,
+            y=data['Volume'],
+            marker_color=colors,
+            opacity=0.7,
+            name='Volume'
+        )
+        fig.add_trace(volume, row=2, col=1)
 
-        # Indicators Chart (Row 3)
-        if has_indicators:
-            fig.add_trace(go.Scatter(x=data.index, y=data['MACD_7_25_9'], mode='lines', 
-                                     line=dict(color='#1E90FF', width=2.5),  # Bold blue
-                                     name='MACD'),
-                          row=3, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['MACDs_7_25_9'], mode='lines', 
-                                     line=dict(color='#FF4500', width=2.5),  # Bold orange-red
-                                     name='Signal'),
-                          row=3, col=1)
-            fig.add_trace(go.Bar(x=data.index, y=data['MACDh_7_25_9'], marker=dict(color='#A9A9A9'), 
-                                 name='Histogram'),
-                          row=3, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['RSI_6'], mode='lines', 
-                                     line=dict(color='#FFFF00', width=2.5),  # Bright yellow
-                                     name='RSI'),
-                          row=3, col=1)
-            fig.add_shape(type='line', x0=data.index[0], y0=70, x1=data.index[-1], y1=70, 
-                          xref='x', yref='y3', line=dict(color='#FF0000', width=2, dash='dash'), 
-                          row=3, col=1)
-            fig.add_shape(type='line', x0=data.index[0], y0=30, x1=data.index[-1], y1=30, 
-                          xref='x', yref='y3', line=dict(color='#00FF00', width=2, dash='dash'), 
-                          row=3, col=1)
-            fig.add_annotation(x=data.index[0], y=70, xref='x', yref='y3', text='OVERBOUGHT 70', 
-                               showarrow=False, font=dict(size=12, color='#FF0000', family='Arial Black'), 
-                               row=3, col=1)
-            fig.add_annotation(x=data.index[0], y=30, xref='x', yref='y3', text='OVERSOLD 30', 
-                               showarrow=False, font=dict(size=12, color='#00FF00', family='Arial Black'), 
-                               row=3, col=1)
+        # Indicators (Row 3)
+        if all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'MACDh_7_25_9', 'RSI_6']):
+            # MACD
+            fig.add_trace(go.Scatter(
+                x=data.index,
+                y=data['MACD_7_25_9'],
+                mode='lines',
+                line=dict(color='#1E90FF', width=2),
+                name='MACD'
+            ), row=3, col=1)
+            
+            fig.add_trace(go.Scatter(
+                x=data.index,
+                y=data['MACDs_7_25_9'],
+                mode='lines',
+                line=dict(color='#FF4500', width=2),
+                name='Signal'
+            ), row=3, col=1)
+            
+            fig.add_trace(go.Bar(
+                x=data.index,
+                y=data['MACDh_7_25_9'],
+                marker_color='#A9A9A9',
+                name='Histogram'
+            ), row=3, col=1)
 
-        animation_text = " 🔴 LIVE" if is_animation_frame else ""
+            # RSI
+            fig.add_trace(go.Scatter(
+                x=data.index,
+                y=data['RSI_6'],
+                mode='lines',
+                line=dict(color='#FFFF00', width=2),
+                name='RSI'
+            ), row=3, col=1)
+
+        # Update layout
         fig.update_layout(
-            title=f"<b><span style='color:#FFD700; font-size:24px'>{ticker} - {interval.upper()} Data{animation_text}</span></b>",
+            title=dict(
+                text=f"{ticker} - {interval.upper()} Data",
+                x=0.5,
+                font=dict(size=24, color='#FFD700')
+            ),
             template='plotly_dark',
             paper_bgcolor='rgba(0, 0, 20, 0.9)',
             plot_bgcolor='rgba(0, 0, 30, 0.7)',
             xaxis_rangeslider_visible=False,
-            height=900,
-            margin=dict(l=20, r=20, t=80, b=20),
-            hovermode='x unified',
+            height=800,
             showlegend=True,
-            xaxis=dict(showgrid=True, gridcolor='rgba(255, 255, 255, 0.2)', 
-                       zeroline=False, type='date', tickfont=dict(size=12, color='#FFFFFF')),
-            xaxis2=dict(showgrid=True, gridcolor='rgba(255, 255, 255, 0.2)', 
-                        zeroline=False, type='date', tickfont=dict(size=12, color='#FFFFFF')),
-            xaxis3=dict(showgrid=True, gridcolor='rgba(255, 255, 255, 0.2)', 
-                        zeroline=False, type='date', tickfont=dict(size=12, color='#FFFFFF')),
-            yaxis=dict(showgrid=True, gridcolor='rgba(255, 255, 255, 0.2)', zeroline=False, side='right',
-                       tickfont=dict(size=12, color='#FFFFFF')),
-            yaxis2=dict(showgrid=False, zeroline=False, side='right',
-                        tickfont=dict(size=12, color='#FFFFFF')),
-            yaxis3=dict(showgrid=False, zeroline=False, side='right', domain=[0, 0.25],
-                        tickfont=dict(size=12, color='#FFFFFF')),
-            legend=dict(x=1.1, y=1, xanchor='left', yanchor='top', font=dict(size=12, color='#FFD700'))
+            hovermode='x unified'
         )
 
-        fig.update_traces(line=dict(width=2.5), selector=dict(type='scatter'))
-        fig.update_traces(marker=dict(line=dict(width=1, color='rgba(255,255,255,0.3)')), selector=dict(type='bar'))
-
-        # Add animation marker
-        if is_animation_frame:
-            # Add a pulsing circle to indicate animation is in progress
-            fig.add_annotation(
-                x=0.5,
-                y=1.05,
-                xref="paper",
-                yref="paper",
-                text="🔴 LIVE SIMULATION",
-                showarrow=False,
-                font=dict(size=14, color="#FF4040"),
-                bgcolor="rgba(255, 0, 0, 0.2)",
-                bordercolor="#FF4040",
-                borderwidth=2,
-                borderpad=4,
-                opacity=0.8
+        # Update axes
+        for i in range(1, 4):
+            fig.update_xaxes(
+                gridcolor='rgba(255, 255, 255, 0.2)',
+                zeroline=False,
+                row=i,
+                col=1
+            )
+            fig.update_yaxes(
+                gridcolor='rgba(255, 255, 255, 0.2)',
+                zeroline=False,
+                row=i,
+                col=1
             )
 
         return fig
+
     except Exception as e:
-        if not is_animation_frame:
-            st.warning("Chart creation temporarily unavailable. Retrying...")
+        logger.error(f"Error creating interactive chart: {e}")
         return go.Figure()
 
 # Enhanced error handling for main function
