@@ -23,9 +23,8 @@ import io
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Add numpy compatibility layer
-if not hasattr(np, 'NaN'):
-    np.NaN = np.nan
+# Add numpy compatibility layer - use nan instead of NaN
+np.NaN = np.nan  # This is the correct way to handle NaN in newer NumPy versions
 
 # Set page config
 st.set_page_config(page_title="Yahoo Finance Stock Analysis", layout="wide", 
