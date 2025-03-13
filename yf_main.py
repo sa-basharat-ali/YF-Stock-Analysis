@@ -711,19 +711,28 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
 # Create Interactive Chart
 def create_interactive_chart(data, ticker, interval, is_animation_frame=False, last_price=None, last_tick_time=None):
     if data is None or data.empty or len(data) < 2:
+        # Only show error in non-animation mode to avoid flooding
         if not is_animation_frame:
             st.warning("Waiting for sufficient data to create chart...")
+            logger.error("No data available for chart creation")
         return go.Figure()
 
+    # Add debug logging
+    logger.info(f"Creating chart for {ticker} with {len(data)} data points")
+    logger.info(f"Data columns: {data.columns.tolist()}")
+    logger.info(f"First timestamp: {data.index[0]}, Last timestamp: {data.index[-1]}")
+
+    has_indicators = all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'RSI_6'])
+    logger.info(f"Has indicators: {has_indicators}")
+
+    # Create figure with subplots
     try:
-        # Create figure with subplots
         fig = make_subplots(rows=3, cols=1, 
-                          specs=[[{"type": "candlestick"}],
-                                [{"type": "bar"}],
-                                [{"type": "scatter"}]],
-                          vertical_spacing=0.15,
-                          subplot_titles=('Candlestick', 'Volume', 'Indicators'),
-                          row_heights=[0.5, 0.2, 0.3])
+                            specs=[[{"type": "candlestick"}],
+                                   [{"type": "bar"}],
+                                   [{"type": "scatter"}]],
+                            vertical_spacing=0.15,
+                            subplot_titles=('Candlestick', 'Volume', 'Indicators'))
 
         # Candlestick Chart (Row 1)
         candlestick = go.Candlestick(
@@ -750,7 +759,7 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
         fig.add_trace(volume, row=2, col=1)
 
         # Indicators (Row 3)
-        if all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'MACDh_7_25_9', 'RSI_6']):
+        if has_indicators:
             # MACD
             fig.add_trace(go.Scatter(
                 x=data.index,
@@ -825,6 +834,9 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
 def main():
     try:
         st.title("📊 Yahoo Finance Stock Analysis")
+        
+        # Add debug info at the start
+        logger.info("Starting main function")
         
         # Sidebar with stock selection, interval, and time range
         st.sidebar.header("Stock Selection")
@@ -949,7 +961,9 @@ def main():
             chart_placeholder = st.empty()
             status_container = st.container()
             animation_status = status_container.empty()
+            logger.info("UI components created successfully")
         except Exception as e:
+            logger.error(f"Error creating UI components: {e}")
             st.error("Error creating UI components. Please refresh the page.")
             return
         
@@ -966,10 +980,13 @@ def main():
         if need_new_data:
             with st.spinner(f"Loading {selected_ticker} data buffer..."):
                 try:
-                    # Add debug info to help with Streamlit Cloud issues
-                    st.info(f"Fetching data for {selected_ticker} with interval {interval} and range {time_range}")
-                    
+                    logger.info(f"Fetching new data for {selected_ticker}")
                     data_buffer = get_stock_data_with_buffer(selected_ticker, interval)
+                    
+                    if data_buffer is not None and not data_buffer.empty:
+                        logger.info(f"Received data with shape: {data_buffer.shape}")
+                    else:
+                        logger.error("Received empty data buffer")
                     
                     # Validate the data buffer
                     if not validate_data_buffer(data_buffer, selected_ticker, interval):
