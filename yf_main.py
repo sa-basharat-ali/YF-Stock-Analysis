@@ -711,124 +711,123 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
 # Create Interactive Chart
 def create_interactive_chart(data, ticker, interval, is_animation_frame=False, last_price=None, last_tick_time=None):
     if data is None or data.empty or len(data) < 2:
+        # Only show error in non-animation mode to avoid flooding
         if not is_animation_frame:
             st.warning("Waiting for sufficient data to create chart...")
             logger.error("No data available for chart creation")
         return go.Figure()
 
-    # Debug logging
-    logger.info(f"Creating chart with data shape: {data.shape}")
-    logger.info(f"Data columns available: {data.columns.tolist()}")
-    logger.info(f"Data index range: {data.index[0]} to {data.index[-1]}")
+    # Add debug logging
+    logger.info(f"Creating chart for {ticker} with {len(data)} data points")
+    logger.info(f"Data columns: {data.columns.tolist()}")
+    logger.info(f"First timestamp: {data.index[0]}, Last timestamp: {data.index[-1]}")
 
+    has_indicators = all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'RSI_6'])
+    logger.info(f"Has indicators: {has_indicators}")
+
+    # Create figure with subplots
     try:
-        # Create figure with secondary y-axis
         fig = make_subplots(rows=3, cols=1, 
-                          shared_xaxes=True,
-                          vertical_spacing=0.03,
-                          row_heights=[0.6, 0.2, 0.2])
+                           specs=[[{"type": "candlestick"}],
+                                 [{"type": "bar"}],
+                                 [{"type": "scatter"}]],
+                           vertical_spacing=0.15,
+                           subplot_titles=('Candlestick', 'Volume', 'Indicators'))
 
-        # Candlestick
-        fig.add_trace(go.Candlestick(
+        # Candlestick Chart (Row 1)
+        candlestick = go.Candlestick(
             x=data.index,
             open=data['Open'],
             high=data['High'],
             low=data['Low'],
             close=data['Close'],
-            name='OHLC',
-            increasing_line_color='#26A69A',
-            decreasing_line_color='#EF5350'
-        ), row=1, col=1)
+            increasing_line_color='#00FF00',
+            decreasing_line_color='#FF4040',
+            name="Price"
+        )
+        fig.add_trace(candlestick, row=1, col=1)
 
-        # Volume
-        colors = ['#26A69A' if row['Close'] >= row['Open'] else '#EF5350' for _, row in data.iterrows()]
-        fig.add_trace(go.Bar(
+        # Volume Chart (Row 2)
+        colors = ['#00CED1' if row['Close'] >= row['Open'] else '#FF7F50' for _, row in data.iterrows()]
+        volume = go.Bar(
             x=data.index,
             y=data['Volume'],
-            name='Volume',
             marker_color=colors,
-            marker_line_width=0
-        ), row=2, col=1)
+            opacity=0.7,
+            name='Volume'
+        )
+        fig.add_trace(volume, row=2, col=1)
 
-        # MACD
-        if 'MACD_7_25_9' in data.columns:
+        # Indicators (Row 3)
+        if has_indicators:
+            # MACD
             fig.add_trace(go.Scatter(
                 x=data.index,
                 y=data['MACD_7_25_9'],
-                name='MACD',
-                line=dict(color='#2962FF')
+                mode='lines',
+                line=dict(color='#1E90FF', width=2),
+                name='MACD'
             ), row=3, col=1)
-
+            
             fig.add_trace(go.Scatter(
                 x=data.index,
                 y=data['MACDs_7_25_9'],
-                name='Signal',
-                line=dict(color='#FF6D00')
+                mode='lines',
+                line=dict(color='#FF4500', width=2),
+                name='Signal'
             ), row=3, col=1)
-
+            
             fig.add_trace(go.Bar(
                 x=data.index,
                 y=data['MACDh_7_25_9'],
-                name='Histogram',
-                marker_color=['#26A69A' if val >= 0 else '#EF5350' for val in data['MACDh_7_25_9']],
-                marker_line_width=0
+                marker_color='#A9A9A9',
+                name='Histogram'
             ), row=3, col=1)
 
-        # RSI
-        if 'RSI_6' in data.columns:
+            # RSI
             fig.add_trace(go.Scatter(
                 x=data.index,
                 y=data['RSI_6'],
-                name='RSI',
-                line=dict(color='#B2DFDB')
+                mode='lines',
+                line=dict(color='#FFFF00', width=2),
+                name='RSI'
             ), row=3, col=1)
 
         # Update layout
         fig.update_layout(
-            title=f'{ticker} {interval} Chart',
-            yaxis_title='Stock Price ($)',
-            yaxis2_title='Volume',
-            xaxis_rangeslider_visible=False,
-            showlegend=False,
-            height=800,
+            title=dict(
+                text=f"{ticker} - {interval.upper()} Data",
+                x=0.5,
+                font=dict(size=24, color='#FFD700')
+            ),
             template='plotly_dark',
-            yaxis=dict(
-                gridcolor='rgba(255, 255, 255, 0.1)',
-                zerolinecolor='rgba(255, 255, 255, 0.1)',
-            ),
-            yaxis2=dict(
-                gridcolor='rgba(255, 255, 255, 0.1)',
-                zerolinecolor='rgba(255, 255, 255, 0.1)',
-            ),
-            yaxis3=dict(
-                gridcolor='rgba(255, 255, 255, 0.1)',
-                zerolinecolor='rgba(255, 255, 255, 0.1)',
-            ),
-            plot_bgcolor='rgba(0, 0, 0, 0)',
-            paper_bgcolor='rgba(0, 0, 0, 0)',
-            font=dict(color='white')
+            paper_bgcolor='rgba(0, 0, 20, 0.9)',
+            plot_bgcolor='rgba(0, 0, 30, 0.7)',
+            xaxis_rangeslider_visible=False,
+            height=800,
+            showlegend=True,
+            hovermode='x unified'
         )
 
         # Update axes
-        fig.update_xaxes(showgrid=True, gridcolor='rgba(255, 255, 255, 0.1)')
-        fig.update_yaxes(showgrid=True)
-
-        # Add last price annotation if provided
-        if last_price is not None:
-            fig.add_annotation(
-                x=data.index[-1],
-                y=last_price,
-                text=f"${last_price:.2f}",
-                showarrow=True,
-                arrowhead=1,
-                row=1, col=1
+        for i in range(1, 4):
+            fig.update_xaxes(
+                gridcolor='rgba(255, 255, 255, 0.2)',
+                zeroline=False,
+                row=i,
+                col=1
+            )
+            fig.update_yaxes(
+                gridcolor='rgba(255, 255, 255, 0.2)',
+                zeroline=False,
+                row=i,
+                col=1
             )
 
         return fig
 
     except Exception as e:
-        logger.error(f"Error creating chart: {e}")
-        logger.error(f"Data head: {data.head().to_dict()}")
+        logger.error(f"Error creating interactive chart: {e}")
         return go.Figure()
 
 # Enhanced error handling for main function
