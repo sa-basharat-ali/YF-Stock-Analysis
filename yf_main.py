@@ -246,22 +246,22 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
     try:
         session = get_session()
         
-        # Adjust period based on interval for better data availability
+        # Adjust period and validate interval combinations
         if interval == '1m':
-            buffer_period = '5d'
+            if period not in ['1d', '7d']:
+                st.warning("1-minute interval is limited to 7 days. Setting time range to 1w.")
+                period = '7d'
         elif interval == '15m':
-            buffer_period = '7d'
-        elif interval == '1d':
-            buffer_period = '60d'
-        else:
-            buffer_period = '5d'
+            if period not in ['1d', '7d']:
+                st.warning("15-minute interval is limited to 7 days. Setting time range to 1w.")
+                period = '7d'
         
         # Try downloading data
         for attempt in range(3):
             try:
                 data = yf.download(
                     ticker,
-                    period=buffer_period,
+                    period=period,
                     interval=interval,
                     session=session,
                     prepost=True,
@@ -280,10 +280,12 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
                 if attempt < 2:
                     time.sleep(2)
                 else:
+                    if 'unauthorized' in str(e).lower():
+                        st.error(f"Unable to fetch {interval} data. This may be due to market hours or data availability.")
                     return pd.DataFrame()
         
         if len(data) == 0:
-            print("No data received after all attempts")
+            st.warning(f"No data available for {ticker} with {interval} interval. Try during market hours (9:30 AM - 4:00 PM EST).")
             return pd.DataFrame()
         
         # Clean up column names
@@ -303,7 +305,7 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
         data = data.dropna()
         
         if len(data) < 2:
-            print("Insufficient data points after cleaning")
+            st.warning("Insufficient data points. Try a different time range or interval.")
             return pd.DataFrame()
         
         # Calculate indicators
@@ -316,6 +318,7 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
         
     except Exception as e:
         print(f"Error in get_stock_data_with_buffer: {e}")
+        st.error(f"Error fetching data: {str(e)}")
         return pd.DataFrame()
 
 # Get current quote (just the latest data)
@@ -705,7 +708,7 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
                        specs=[[{"type": "candlestick"}],
                              [{"type": "bar"}],
                              [{"type": "scatter"}]],
-                       vertical_spacing=0.08,  # Increased spacing between subplots
+                       vertical_spacing=0.12,  # Increased spacing between subplots
                        row_heights=[0.5, 0.2, 0.3],  # Adjusted row heights
                        subplot_titles=('Price', 'Volume', 'Indicators'))
 
@@ -716,14 +719,14 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
         high=data['High'],
         low=data['Low'],
         close=data['Close'],
-        increasing_line_color='#00FF00',
-        decreasing_line_color='#FF4040',
+        increasing=dict(line=dict(color='#00FF00'), fillcolor='#00FF00'),
+        decreasing=dict(line=dict(color='#FF4040'), fillcolor='#FF4040'),
         name="Price"
     )
     fig.add_trace(candlestick, row=1, col=1)
 
     # Add current price annotation if in animation mode
-    if is_animation_frame:
+    if is_animation_frame and len(data) > 0:
         current_price = data['Close'].iloc[-1]
         fig.add_annotation(
             x=data.index[-1],
@@ -752,6 +755,7 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
         x=data.index,
         y=data['Volume'],
         marker_color=colors,
+        marker_line_width=0,
         name='Volume'
     )
     fig.add_trace(volume, row=2, col=1)
@@ -788,17 +792,18 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             name='RSI'
         ), row=3, col=1)
 
-        # Add overbought/oversold lines
+        # Add overbought/oversold lines with improved visibility
         fig.add_hline(y=70, line=dict(color='#FF0000', width=1, dash='dash'), row=3, col=1)
         fig.add_hline(y=30, line=dict(color='#00FF00', width=1, dash='dash'), row=3, col=1)
         
-        # Add overbought/oversold labels
+        # Add overbought/oversold labels with improved positioning
         fig.add_annotation(
             x=data.index[0], y=70,
             text="OVERBOUGHT 70",
             showarrow=False,
             font=dict(color='#FF0000', size=10),
             xanchor='left',
+            yanchor='bottom',
             row=3, col=1
         )
         fig.add_annotation(
@@ -807,10 +812,11 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             showarrow=False,
             font=dict(color='#00FF00', size=10),
             xanchor='left',
+            yanchor='top',
             row=3, col=1
         )
 
-    # Update layout
+    # Update layout with improved styling
     title_text = f"{ticker} - {interval.upper()} Data{'🔴 LIVE' if is_animation_frame else ''}"
     fig.update_layout(
         title=dict(
@@ -834,7 +840,7 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             bordercolor='#FFFFFF',
             font=dict(color='#FFFFFF')
         ),
-        margin=dict(l=50, r=50, t=80, b=50)  # Increased top margin
+        margin=dict(l=50, r=50, t=80, b=50)
     )
 
     # Update axes with improved styling
@@ -854,24 +860,26 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
         fig.update_xaxes(
             **axis_props,
             row=i, col=1,
-            rangeslider_visible=False,  # Disable rangeslider for all subplots
+            rangeslider_visible=False,
             rangebreaks=[
                 dict(bounds=["sat", "mon"]),  # Hide weekends
                 dict(bounds=[20, 9], pattern="hour"),  # Hide non-trading hours
-            ] if i == 1 else None  # Only apply rangebreaks to main price chart
+            ] if interval != '1d' else [dict(bounds=["sat", "mon"])]  # Only hide weekends for daily data
         )
         
-        # Y-axis updates
+        # Y-axis updates with improved visibility
         fig.update_yaxes(
             **axis_props,
             row=i, col=1,
-            side='right' if i == 3 else 'left'  # Move indicator y-axis to right
+            side='right' if i == 3 else 'left',
+            tickfont=dict(size=10),
+            title_font=dict(size=12)
         )
 
-    # Update subplot titles with better styling
+    # Update subplot titles with improved visibility
     for i in fig['layout']['annotations']:
         i['font'] = dict(size=12, color='#FFFFFF')
-        i['y'] = i['y'] - 0.03  # Move titles up slightly
+        i['y'] = i['y'] - 0.03
 
     return fig
 
