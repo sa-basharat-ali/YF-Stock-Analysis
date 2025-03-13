@@ -250,22 +250,22 @@ def generate_simulated_ticks(data_buffer, num_ticks=5, start_idx=None, volatilit
             # Default to second-to-last candle
             start_idx = len(data_buffer) - 2
         
-        # Ensure start_idx is valid
+        # Ensure start_idx is valid and we have enough data
         start_idx = min(max(0, start_idx), len(data_buffer) - 2)
         
         # Get two consecutive candles
         current_candle = data_buffer.iloc[start_idx]
         next_candle = data_buffer.iloc[start_idx + 1]
         
-        # Extract timestamps and ensure they're timezone-naive
-        start_time = pd.Timestamp(data_buffer.index[start_idx]).replace(tzinfo=None)
-        end_time = pd.Timestamp(data_buffer.index[start_idx + 1]).replace(tzinfo=None)
+        # Extract timestamps
+        start_time = pd.Timestamp(data_buffer.index[start_idx])
+        end_time = pd.Timestamp(data_buffer.index[start_idx + 1])
         time_delta = (end_time - start_time) / (num_ticks + 1)
         
         # Generate ticks
         ticks = []
-        prev_price = float(current_candle['Close'])  # Ensure numeric type
-        base_volume = float(next_candle['Volume']) / num_ticks  # Ensure numeric type
+        prev_price = float(current_candle['Close'])
+        base_volume = float(next_candle['Volume']) / num_ticks
         
         # Calculate price range for volatility
         price_range = max(
@@ -273,6 +273,10 @@ def generate_simulated_ticks(data_buffer, num_ticks=5, start_idx=None, volatilit
             abs(float(next_candle['Close']) - float(current_candle['Close'])),
             0.0001
         )
+        
+        # Pre-calculate the target price
+        target_price = float(next_candle['Close'])
+        price_diff = target_price - prev_price
         
         for i in range(num_ticks):
             try:
@@ -282,22 +286,18 @@ def generate_simulated_ticks(data_buffer, num_ticks=5, start_idx=None, volatilit
                 # Progress factor (0 to 1)
                 progress = (i + 1) / (num_ticks + 1)
                 
-                # Calculate target price
-                target_price = float(current_candle['Close']) + progress * (float(next_candle['Close']) - float(current_candle['Close']))
-                
-                # Add random noise proportional to volatility and price range
+                # Calculate price with momentum and controlled volatility
+                price_movement = price_diff * progress
                 noise = np.random.normal(0, volatility * price_range)
+                new_price = prev_price + price_movement * 0.7 + noise
                 
-                # New price with momentum and noise
-                new_price = prev_price + (target_price - prev_price) * 0.7 + noise
+                # Constrain price within candle bounds
+                new_price = max(min(new_price, float(next_candle['High'])), float(next_candle['Low']))
                 
-                # Constrain price within reasonable bounds
-                new_price = max(min(new_price, float(next_candle['High']) * 1.001), float(next_candle['Low']) * 0.999)
+                # Generate realistic volume
+                vol_factor = 1 + np.random.normal(0, 0.2)  # 20% standard deviation
+                simulated_volume = max(1, int(base_volume * vol_factor))
                 
-                # Generate simulated volume with proper type casting
-                simulated_volume = max(1, int(base_volume * (1 + random.uniform(-0.25, 0.25))))
-                
-                # Create simulated tick
                 tick = {
                     'timestamp': tick_time,
                     'price': new_price,
@@ -369,27 +369,33 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
                 last_candle = frame.iloc[-1].copy()
                 updated_candle = update_candle_with_tick(last_candle, tick)
                 if updated_candle is not None:
-                    # Ensure index alignment before updating
-                    if frame.index[-1] in data_buffer.index:
-                        frame.iloc[-1] = updated_candle
+                    frame.iloc[-1] = updated_candle
             except Exception as e:
                 print(f"Error updating candle with tick: {e}")
         
         # Calculate indicators when needed
         indicator_cols = ['MACD_7_25_9', 'MACDs_7_25_9', 'MACDh_7_25_9', 'RSI_6']
-        has_indicators = all(col in data_buffer.columns for col in indicator_cols)
         
-        if has_indicators and len(frame) >= 26:
+        if len(frame) >= 26:  # Only calculate if we have enough data points
             try:
-                # Copy existing indicators from the buffer
-                for col in indicator_cols:
-                    if col in data_buffer.columns:
-                        # Get the common index between frame and data_buffer
-                        common_index = frame.index.intersection(data_buffer.index)
-                        # Only copy indicators for matching indices
-                        frame.loc[common_index, col] = data_buffer.loc[common_index, col]
+                # Create a copy for indicator calculations
+                indicator_frame = frame.copy()
+                
+                # Calculate MACD
+                macd = indicator_frame.ta.macd(fast=7, slow=25, signal=9)
+                if macd is not None:
+                    for col in macd.columns:
+                        frame[col] = macd[col]
+                
+                # Calculate RSI
+                rsi = indicator_frame.ta.rsi(length=6)
+                if rsi is not None:
+                    frame['RSI_6'] = rsi
+                
+                # Forward fill any remaining NaN values
+                frame = frame.fillna(method='ffill').fillna(method='bfill')
             except Exception as e:
-                print(f"Error copying indicators: {e}")
+                print(f"Error calculating indicators in animation frame: {e}")
         
         return frame
         
