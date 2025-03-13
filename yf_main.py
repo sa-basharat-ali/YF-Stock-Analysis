@@ -17,33 +17,67 @@ import json
 import functools  # For partial function application
 import logging
 import io
+import sys
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Enhanced logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger(__name__)
 
-# Add numpy compatibility layer - use nan instead of NaN
-np.NaN = np.nan  # This is the correct way to handle NaN in newer NumPy versions
+# Add debug information at startup
+logger.info("Starting application...")
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Pandas version: {pd.__version__}")
+logger.info(f"NumPy version: {np.__version__}")
+logger.info(f"Plotly version: {go.__version__}")
+logger.info(f"YFinance version: {yf.__version__ if hasattr(yf, '__version__') else 'unknown'}")
 
-# Set page config
-st.set_page_config(page_title="Yahoo Finance Stock Analysis", layout="wide", 
-                  page_icon="📊", initial_sidebar_state="expanded")
+# Set page config with error capture
+try:
+    st.set_page_config(
+        page_title="Yahoo Finance Stock Analysis",
+        layout="wide",
+        page_icon="📊",
+        initial_sidebar_state="expanded",
+        menu_items={
+            'Get Help': 'https://github.com/sa-basharat-ali/YF-Stock-Analysis/issues',
+            'Report a bug': 'https://github.com/sa-basharat-ali/YF-Stock-Analysis/issues',
+            'About': 'Stock analysis tool using Yahoo Finance data'
+        }
+    )
+    logger.info("Page config set successfully")
+except Exception as e:
+    logger.error(f"Error setting page config: {e}")
 
-# Create session state variables to store data and animation state
-if 'data_buffer' not in st.session_state:
-    st.session_state.data_buffer = None
+# Add error handling for session state
+try:
+    if 'data_buffer' not in st.session_state:
+        st.session_state.data_buffer = None
+        logger.info("Initialized data_buffer in session state")
     
-if 'current_index' not in st.session_state:
-    st.session_state.current_index = 0
+    if 'current_index' not in st.session_state:
+        st.session_state.current_index = 0
+        logger.info("Initialized current_index in session state")
     
-if 'animation_speed' not in st.session_state:
-    st.session_state.animation_speed = 0.5  # seconds between frames
+    if 'animation_speed' not in st.session_state:
+        st.session_state.animation_speed = 0.5
+        logger.info("Initialized animation_speed in session state")
     
-if 'is_animating' not in st.session_state:
-    st.session_state.is_animating = False
+    if 'is_animating' not in st.session_state:
+        st.session_state.is_animating = False
+        logger.info("Initialized is_animating in session state")
     
-if 'buffer_loaded' not in st.session_state:
-    st.session_state.buffer_loaded = False
+    if 'buffer_loaded' not in st.session_state:
+        st.session_state.buffer_loaded = False
+        logger.info("Initialized buffer_loaded in session state")
+except Exception as e:
+    logger.error(f"Error initializing session state: {e}")
+    st.error("Error initializing application state. Please refresh the page.")
 
 # Set up improved session for API calls
 def get_session():
@@ -975,19 +1009,6 @@ if __name__ == "__main__":
     try:
         # Create cache directory if it doesn't exist
         os.makedirs('.streamlit/cache', exist_ok=True)
-        
-        # Import sys for diagnostic info
-        import sys
-        
-        # Diagnostic info
-        st.sidebar.markdown("### Diagnostic Info")
-        expander = st.sidebar.expander("Show Diagnostic Info")
-        with expander:
-            st.write(f"Python version: {sys.version}")
-            st.write(f"pandas version: {pd.__version__}")
-            st.write(f"numpy version: {np.__version__}")
-            st.write(f"yfinance version: {yf.__version__ if hasattr(yf, '__version__') else 'unknown'}")
-            st.write(f"Current time: {datetime.datetime.now()}")
         
         main()
     except Exception as e:

@@ -1,0 +1,25 @@
+[theme]
+primaryColor="#FFD700"
+backgroundColor="#0E1117"
+secondaryBackgroundColor="#262730"
+textColor="#FFFFFF"
+font="sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+maxUploadSize = 200
+enableXsrfProtection = true
+enableCORS = false
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[runner]
+magicEnabled = true
+fastRerenderEnabled = true
+
+[logger]
+level = "info" 
