@@ -294,7 +294,9 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         st.error("Application error. Please refresh the page.")
-        st.error(f"Details: {str(e)}")# Function to update KPIs with full data
+        st.error(f"Details: {str(e)}")
+
+# Function to update KPIs with full data
 def update_kpis(data, kpi_placeholder):
     """Update KPIs with full historical data"""
     if data is None or data.empty:
@@ -450,9 +452,11 @@ def validate_data_buffer(data_buffer, ticker, interval):
     # Check for valid values
     if data_buffer.isnull().any().any():
         # Handle silently
-        data_buffer = data_buffer.fillna(method='ffill').fillna(method='bfill')
+        data_buffer = data_buffer.ffill().bfill()
     
-    return Trueimport streamlit as st
+    return True
+
+import streamlit as st
 import pandas as pd
 import numpy as np
 
@@ -652,8 +656,8 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
             st.warning(f"Data is missing required columns: {missing}")
             return pd.DataFrame()
         
-        # Handle data cleaning
-        data = data.dropna()  # Remove any NaN values
+        # Clean the data
+        data = data.ffill().bfill()
         
         # Ensure we have minimum required data
         if len(data) < 2:
@@ -678,8 +682,10 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
                 if rsi is not None:
                     data['RSI_6'] = rsi
                 
-                # Forward fill any remaining NaN values
-                data = data.fillna(method='ffill').fillna(method='bfill')
+                # Forward fill first
+                result_data = data.ffill()
+                # Then backward fill any remaining NaNs
+                result_data = result_data.bfill()
             except Exception as e:
                 logger.error(f"Error calculating indicators: {e}")
         
@@ -797,10 +803,10 @@ def calculate_indicators(data):
                 rsi = rsi.reindex(result_data.index)
                 result_data['RSI_6'] = rsi
             
-            # Forward fill any remaining NaN values
-            result_data = result_data.fillna(method='ffill')
-            # Backward fill any remaining NaN values at the beginning
-            result_data = result_data.fillna(method='bfill')
+            # Forward fill first
+            result_data = result_data.ffill()
+            # Then backward fill any remaining NaNs
+            result_data = result_data.bfill()
             
         return result_data
             
@@ -961,8 +967,8 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
                 if rsi is not None:
                     frame['RSI_6'] = rsi
                 
-                # Forward fill any remaining NaN values
-                frame = frame.fillna(method='ffill').fillna(method='bfill')
+                # Fill any NaN values
+                frame = frame.ffill().bfill()
             except Exception as e:
                 logger.error(f"Error calculating indicators in animation frame: {e}")
         
