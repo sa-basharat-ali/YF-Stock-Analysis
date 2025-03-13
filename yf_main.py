@@ -207,6 +207,12 @@ def calculate_indicators(data):
         # Make a copy to avoid modifying the original dataframe
         result_data = data.copy()
         
+        # Remove any existing indicator columns to prevent duplicates
+        indicator_cols = ['MACD_7_25_9', 'MACDs_7_25_9', 'MACDh_7_25_9', 'RSI_6']
+        for col in indicator_cols:
+            if col in result_data.columns:
+                result_data = result_data.drop(columns=[col])
+        
         # Calculate MACD
         exp1 = result_data['Close'].ewm(span=7, adjust=False).mean()
         exp2 = result_data['Close'].ewm(span=25, adjust=False).mean()
@@ -308,11 +314,13 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
             st.warning("Insufficient data points. Try a different time range or interval.")
             return pd.DataFrame()
         
-        # Calculate indicators
-        data = calculate_indicators(data)
+        # Calculate indicators only once
+        if 'MACD_7_25_9' not in data.columns:  # Check if indicators are already calculated
+            data = calculate_indicators(data)
         
         print(f"Final data shape: {data.shape}")
         print(f"Final columns: {data.columns.tolist()}")
+        print(f"Time range: {data.index[0]} to {data.index[-1]}")
         
         return data
         
