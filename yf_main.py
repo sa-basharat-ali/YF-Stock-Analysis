@@ -680,19 +680,15 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
         
         if len(frame) >= 26:  # Only calculate if we have enough data points
             try:
-                # Create a copy for indicator calculations
-                indicator_frame = frame.copy()
-                
                 # Calculate MACD
-                macd = indicator_frame.ta.macd(fast=7, slow=25, signal=9)
-                if macd is not None:
-                    for col in macd.columns:
-                        frame[col] = macd[col]
+                macd_data = calculate_macd(frame)
+                if not macd_data.empty:
+                    frame = pd.concat([frame, macd_data], axis=1)
                 
                 # Calculate RSI
-                rsi = indicator_frame.ta.rsi(length=6)
-                if rsi is not None:
-                    frame['RSI_6'] = rsi
+                rsi_data = calculate_rsi(frame)
+                if not rsi_data.empty:
+                    frame['RSI_6'] = rsi_data
                 
                 # Fill any NaN values
                 frame = frame.ffill().bfill()
