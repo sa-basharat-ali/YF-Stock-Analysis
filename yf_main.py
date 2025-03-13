@@ -1,3 +1,52 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import datetime
+import time
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import pandas_ta as ta
+import os
+import copy
+from scipy.interpolate import interp1d
+import random
+import json
+import functools  # For partial function application
+import logging
+import io
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Add numpy compatibility layer
+if not hasattr(np, 'NaN'):
+    np.NaN = np.nan
+
+# Set page config
+st.set_page_config(page_title="Yahoo Finance Stock Analysis", layout="wide", 
+                  page_icon="📊", initial_sidebar_state="expanded")
+
+# Create session state variables to store data and animation state
+if 'data_buffer' not in st.session_state:
+    st.session_state.data_buffer = None
+    
+if 'current_index' not in st.session_state:
+    st.session_state.current_index = 0
+    
+if 'animation_speed' not in st.session_state:
+    st.session_state.animation_speed = 0.5  # seconds between frames
+    
+if 'is_animating' not in st.session_state:
+    st.session_state.is_animating = False
+    
+if 'buffer_loaded' not in st.session_state:
+    st.session_state.buffer_loaded = False
+
 # Enhanced error handling for main function
 def main():
     try:
@@ -455,56 +504,6 @@ def validate_data_buffer(data_buffer, ticker, interval):
         data_buffer = data_buffer.ffill().bfill()
     
     return True
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-
-# Add numpy compatibility layer
-if not hasattr(np, 'NaN'):
-    np.NaN = np.nan
-
-import yfinance as yf
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import datetime
-import time
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-import pandas_ta as ta
-import os
-import copy
-from scipy.interpolate import interp1d
-import random
-import json
-import functools  # For partial function application
-import logging
-import io
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Set page config
-st.set_page_config(page_title="Yahoo Finance Stock Analysis", layout="wide", 
-                  page_icon="📊", initial_sidebar_state="expanded")
-
-# Create session state variables to store data and animation state
-if 'data_buffer' not in st.session_state:
-    st.session_state.data_buffer = None
-    
-if 'current_index' not in st.session_state:
-    st.session_state.current_index = 0
-    
-if 'animation_speed' not in st.session_state:
-    st.session_state.animation_speed = 0.5  # seconds between frames
-    
-if 'is_animating' not in st.session_state:
-    st.session_state.is_animating = False
-    
-if 'buffer_loaded' not in st.session_state:
-    st.session_state.buffer_loaded = False
 
 # Set up improved session for API calls
 def get_session():
