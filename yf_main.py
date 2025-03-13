@@ -49,34 +49,32 @@ def get_session():
     return session
 
 # Fetch stock data with buffer
-@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour
+@st.cache_data(ttl=60, show_spinner=False)  # Cache for 1 minute to allow frequent updates
 def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
     """Fetch a day's worth of data to use as a buffer for animations"""
     try:
         session = get_session()
         
-        # Check current time (EST)
-        est_tz = datetime.timezone(datetime.timedelta(hours=-5))
-        current_time = datetime.datetime.now(est_tz)
-        is_market_hours = (
-            current_time.weekday() < 5 and  # Monday to Friday
-            datetime.time(9, 30) <= current_time.time() <= datetime.time(16, 0)
-        )
-        
-        # Adjust period based on interval and market hours
+        # Adjust period based on interval for better data availability
         if interval == '1m':
-            if not is_market_hours:
-                st.warning("Market is currently closed. Using latest available data.")
-            buffer_period = '1d'
+            buffer_period = '2d'  # Fetch 2 days to ensure we have enough data
         elif interval == '15m':
             buffer_period = '7d'
         elif interval == '1d':
             buffer_period = '60d'
         else:
-            buffer_period = '1d'
+            buffer_period = '2d'
             
-        # Fetch data
-        data = yf.download(ticker, period=buffer_period, interval=interval, session=session)
+        # Fetch data with retries
+        for attempt in range(3):  # Try up to 3 times
+            try:
+                data = yf.download(ticker, period=buffer_period, interval=interval, session=session)
+                break
+            except Exception as e:
+                if attempt == 2:  # Last attempt failed
+                    st.error(f"Failed to fetch data after 3 attempts: {e}")
+                    return pd.DataFrame()
+                time.sleep(1)  # Wait before retrying
         
         if len(data) > 0:
             if isinstance(data.columns, pd.MultiIndex):
@@ -101,12 +99,11 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
             
             return data
             
-        st.warning(f"No data returned for {ticker}. This could be due to:")
+        st.warning(f"No data available for {ticker}. Please try:")
         st.markdown("""
-        - Market hours (9:30 AM - 4:00 PM EST for US stocks)
-        - Invalid ticker symbol
-        - Recent IPO or delisting
-        - Trading halts or suspensions
+        - Refreshing the page
+        - Changing the time interval
+        - Selecting a different ticker
         """)
         return pd.DataFrame()
         
@@ -115,17 +112,28 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
         return pd.DataFrame()
 
 # Get current quote (just the latest data)
-@st.cache_data(ttl=15, show_spinner=False, max_entries=100)  # Cache expires every 15 seconds
+@st.cache_data(ttl=30, show_spinner=False, max_entries=50)  # Cache for 30 seconds, keep last 50 entries
 def get_current_quote(ticker):
     try:
         session = get_session()
-        data = yf.download(ticker, period='1d', interval='1m', session=session)
-        if len(data) > 0:
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-            return data.iloc[-1]
+        
+        # Try up to 3 times with exponential backoff
+        for attempt in range(3):
+            try:
+                data = yf.download(ticker, period='1d', interval='1m', session=session)
+                if len(data) > 0:
+                    if isinstance(data.columns, pd.MultiIndex):
+                        data.columns = data.columns.get_level_values(0)
+                    return data.iloc[-1]
+                time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    print(f"Failed to fetch current quote after 3 attempts: {e}")
+                    return None
+                time.sleep(0.5 * (attempt + 1))  # Exponential backoff
         return None
     except Exception as e:
+        print(f"Error in get_current_quote: {e}")
         return None
 
 # Fetch tickers (cached for 24 hours)
