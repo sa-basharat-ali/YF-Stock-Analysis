@@ -711,123 +711,124 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
 # Create Interactive Chart
 def create_interactive_chart(data, ticker, interval, is_animation_frame=False, last_price=None, last_tick_time=None):
     if data is None or data.empty or len(data) < 2:
-        # Only show error in non-animation mode to avoid flooding
         if not is_animation_frame:
             st.warning("Waiting for sufficient data to create chart...")
             logger.error("No data available for chart creation")
         return go.Figure()
 
-    # Add debug logging
-    logger.info(f"Creating chart for {ticker} with {len(data)} data points")
-    logger.info(f"Data columns: {data.columns.tolist()}")
-    logger.info(f"First timestamp: {data.index[0]}, Last timestamp: {data.index[-1]}")
+    # Debug logging
+    logger.info(f"Creating chart with data shape: {data.shape}")
+    logger.info(f"Data columns available: {data.columns.tolist()}")
+    logger.info(f"Data index range: {data.index[0]} to {data.index[-1]}")
 
-    has_indicators = all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'RSI_6'])
-    logger.info(f"Has indicators: {has_indicators}")
-
-    # Create figure with subplots
     try:
+        # Create figure with secondary y-axis
         fig = make_subplots(rows=3, cols=1, 
-                            specs=[[{"type": "candlestick"}],
-                                   [{"type": "bar"}],
-                                   [{"type": "scatter"}]],
-                            vertical_spacing=0.15,
-                            subplot_titles=('Candlestick', 'Volume', 'Indicators'))
+                          shared_xaxes=True,
+                          vertical_spacing=0.03,
+                          row_heights=[0.6, 0.2, 0.2])
 
-        # Candlestick Chart (Row 1)
-        candlestick = go.Candlestick(
+        # Candlestick
+        fig.add_trace(go.Candlestick(
             x=data.index,
             open=data['Open'],
             high=data['High'],
             low=data['Low'],
             close=data['Close'],
-            increasing_line_color='#00FF00',
-            decreasing_line_color='#FF4040',
-            name="Price"
-        )
-        fig.add_trace(candlestick, row=1, col=1)
+            name='OHLC',
+            increasing_line_color='#26A69A',
+            decreasing_line_color='#EF5350'
+        ), row=1, col=1)
 
-        # Volume Chart (Row 2)
-        colors = ['#00CED1' if row['Close'] >= row['Open'] else '#FF7F50' for _, row in data.iterrows()]
-        volume = go.Bar(
+        # Volume
+        colors = ['#26A69A' if row['Close'] >= row['Open'] else '#EF5350' for _, row in data.iterrows()]
+        fig.add_trace(go.Bar(
             x=data.index,
             y=data['Volume'],
+            name='Volume',
             marker_color=colors,
-            opacity=0.7,
-            name='Volume'
-        )
-        fig.add_trace(volume, row=2, col=1)
+            marker_line_width=0
+        ), row=2, col=1)
 
-        # Indicators (Row 3)
-        if has_indicators:
-            # MACD
+        # MACD
+        if 'MACD_7_25_9' in data.columns:
             fig.add_trace(go.Scatter(
                 x=data.index,
                 y=data['MACD_7_25_9'],
-                mode='lines',
-                line=dict(color='#1E90FF', width=2),
-                name='MACD'
+                name='MACD',
+                line=dict(color='#2962FF')
             ), row=3, col=1)
-            
+
             fig.add_trace(go.Scatter(
                 x=data.index,
                 y=data['MACDs_7_25_9'],
-                mode='lines',
-                line=dict(color='#FF4500', width=2),
-                name='Signal'
+                name='Signal',
+                line=dict(color='#FF6D00')
             ), row=3, col=1)
-            
+
             fig.add_trace(go.Bar(
                 x=data.index,
                 y=data['MACDh_7_25_9'],
-                marker_color='#A9A9A9',
-                name='Histogram'
+                name='Histogram',
+                marker_color=['#26A69A' if val >= 0 else '#EF5350' for val in data['MACDh_7_25_9']],
+                marker_line_width=0
             ), row=3, col=1)
 
-            # RSI
+        # RSI
+        if 'RSI_6' in data.columns:
             fig.add_trace(go.Scatter(
                 x=data.index,
                 y=data['RSI_6'],
-                mode='lines',
-                line=dict(color='#FFFF00', width=2),
-                name='RSI'
+                name='RSI',
+                line=dict(color='#B2DFDB')
             ), row=3, col=1)
 
         # Update layout
         fig.update_layout(
-            title=dict(
-                text=f"{ticker} - {interval.upper()} Data",
-                x=0.5,
-                font=dict(size=24, color='#FFD700')
-            ),
-            template='plotly_dark',
-            paper_bgcolor='rgba(0, 0, 20, 0.9)',
-            plot_bgcolor='rgba(0, 0, 30, 0.7)',
+            title=f'{ticker} {interval} Chart',
+            yaxis_title='Stock Price ($)',
+            yaxis2_title='Volume',
             xaxis_rangeslider_visible=False,
+            showlegend=False,
             height=800,
-            showlegend=True,
-            hovermode='x unified'
+            template='plotly_dark',
+            yaxis=dict(
+                gridcolor='rgba(255, 255, 255, 0.1)',
+                zerolinecolor='rgba(255, 255, 255, 0.1)',
+            ),
+            yaxis2=dict(
+                gridcolor='rgba(255, 255, 255, 0.1)',
+                zerolinecolor='rgba(255, 255, 255, 0.1)',
+            ),
+            yaxis3=dict(
+                gridcolor='rgba(255, 255, 255, 0.1)',
+                zerolinecolor='rgba(255, 255, 255, 0.1)',
+            ),
+            plot_bgcolor='rgba(0, 0, 0, 0)',
+            paper_bgcolor='rgba(0, 0, 0, 0)',
+            font=dict(color='white')
         )
 
         # Update axes
-        for i in range(1, 4):
-            fig.update_xaxes(
-                gridcolor='rgba(255, 255, 255, 0.2)',
-                zeroline=False,
-                row=i,
-                col=1
-            )
-            fig.update_yaxes(
-                gridcolor='rgba(255, 255, 255, 0.2)',
-                zeroline=False,
-                row=i,
-                col=1
+        fig.update_xaxes(showgrid=True, gridcolor='rgba(255, 255, 255, 0.1)')
+        fig.update_yaxes(showgrid=True)
+
+        # Add last price annotation if provided
+        if last_price is not None:
+            fig.add_annotation(
+                x=data.index[-1],
+                y=last_price,
+                text=f"${last_price:.2f}",
+                showarrow=True,
+                arrowhead=1,
+                row=1, col=1
             )
 
         return fig
 
     except Exception as e:
-        logger.error(f"Error creating interactive chart: {e}")
+        logger.error(f"Error creating chart: {e}")
+        logger.error(f"Data head: {data.head().to_dict()}")
         return go.Figure()
 
 # Enhanced error handling for main function
@@ -838,123 +839,6 @@ def main():
         # Add debug info at the start
         logger.info("Starting main function")
         
-        # Sidebar with stock selection, interval, and time range
-        st.sidebar.header("Stock Selection")
-        
-        # Error handling for ticker refresh
-        try:
-            if st.sidebar.button("Refresh Yahoo Finance Tickers"):
-                if os.path.exists("yfinance_tickers.csv"):
-                    try:
-                        os.remove("yfinance_tickers.csv")
-                        st.success("Ticker list will be refreshed!")
-                    except Exception as e:
-                        st.warning(f"Could not remove existing ticker file. Using cached data.")
-                st.experimental_rerun()
-        except Exception as e:
-            st.warning("Error refreshing tickers. Using default ticker list.")
-            
-        # Safe ticker loading
-        try:
-            tickers = get_tickers_cached(None)
-            if not tickers:
-                st.warning("Could not load tickers. Using default popular tickers.")
-                tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
-        except Exception as e:
-            st.warning("Error loading tickers. Using default popular tickers.")
-            tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
-        
-        ticker_df = pd.DataFrame({"Symbol": tickers})
-        csv_data = ticker_df.to_csv(index=False).encode('utf-8')
-        
-        try:
-            st.sidebar.download_button(
-                label="Download Ticker List",
-                data=csv_data,
-                file_name="yahoo_finance_tickers.csv",
-                mime="text/csv"
-            )
-        except Exception as e:
-            st.sidebar.warning("Could not create download button for ticker list.")
-
-        # Safe ticker search
-        ticker_search = st.sidebar.text_input("Search Tickers:")
-        if ticker_search:
-            try:
-                filtered_tickers = [t for t in tickers if ticker_search.upper() in t]
-                display_tickers = filtered_tickers[:100] if len(filtered_tickers) > 100 else filtered_tickers
-                if len(filtered_tickers) > 100:
-                    st.sidebar.info(f"Found {len(filtered_tickers)} matches. Showing first 100.")
-                if not filtered_tickers:
-                    st.sidebar.warning("No matches found. Showing all tickers.")
-                    display_tickers = tickers[:100]
-            except Exception as e:
-                st.sidebar.warning("Error in ticker search. Showing default tickers.")
-                display_tickers = tickers[:100]
-        else:
-            try:
-                popular = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
-                other_tickers = [t for t in tickers if t not in popular]
-                display_tickers = popular + other_tickers[:90]
-            except Exception as e:
-                st.sidebar.warning("Error creating ticker list. Using popular tickers only.")
-                display_tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
-
-        selected_ticker = st.sidebar.selectbox("Select Stock", display_tickers)
-        
-        # Interval and Time Range Filters with validation
-        st.sidebar.header("Chart Settings")
-        interval = st.sidebar.selectbox("Interval", ['1m', '15m', '1d'], 
-                                       help="Select interval: 1m (1-minute), 15m (15-minute), 1d (1-day).")
-        time_range = st.sidebar.selectbox("Time Range", ['1h', '1d', '1w', '1mo', '1y'], 
-                                         help="Select time range for the chart.")
-
-        # Animation settings with validation
-        st.sidebar.header("Animation Settings")
-        enable_animation = st.sidebar.checkbox("Enable Live Animation", value=True, 
-                                             help="Enable animations that simulate live price movements")
-        animation_speed = st.sidebar.slider("Animation Speed", min_value=0.1, max_value=2.0, value=0.5, step=0.1,
-                                          help="Speed of price animation (lower is faster)")
-        volatility = st.sidebar.slider("Volatility", min_value=0.0001, max_value=0.001, value=0.0003, step=0.0001,
-                                      format="%.4f", help="Controls the randomness of price movements")
-        
-        # Set animation speed in session state
-        st.session_state.animation_speed = animation_speed
-
-        # Validate and adjust interval and time range compatibility
-        period = time_range
-        if time_range == '1h':
-            if interval != '1m':
-                st.sidebar.warning("1-hour range requires 1-minute interval. Setting interval to 1m.")
-                interval = '1m'
-            period = '1d'  # yfinance doesn't support '1h', so fetch 1d and filter
-        elif time_range == '1d':
-            if interval == '1d':
-                st.sidebar.warning("1-day range requires a smaller interval (1m or 15m). Setting interval to 15m.")
-                interval = '15m'
-            period = '2d'  # Extend to 2 days to ensure enough data for 1d range
-        elif time_range == '1w':
-            if interval == '1m':
-                period = '7d'
-            elif interval == '15m':
-                period = '7d'
-            else:  # interval == '1d'
-                period = '7d'
-        elif time_range == '1mo':
-            if interval == '1m':
-                st.sidebar.warning("1-month range with 1m interval is limited to 7 days. Setting time range to 1w.")
-                time_range = '1w'
-                period = '7d'
-            elif interval == '15m':
-                period = '1mo'
-            else:  # interval == '1d'
-                period = '1mo'
-        elif time_range == '1y':
-            if interval in ['1m', '15m']:
-                st.sidebar.warning("1-year range requires 1d interval. Setting interval to 1d.")
-                interval = '1d'
-            period = '1y'
-
         # Create placeholders with error handling
         try:
             kpi_placeholder = st.empty()
@@ -966,152 +850,117 @@ def main():
             logger.error(f"Error creating UI components: {e}")
             st.error("Error creating UI components. Please refresh the page.")
             return
+
+        # Sidebar setup
+        st.sidebar.header("Stock Selection")
         
+        # Safe ticker loading
+        try:
+            tickers = get_tickers_cached(None)
+            if not tickers:
+                st.warning("Could not load tickers. Using default popular tickers.")
+                tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
+        except Exception as e:
+            st.warning("Error loading tickers. Using default popular tickers.")
+            tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
+        
+        # Safe ticker search
+        ticker_search = st.sidebar.text_input("Search Tickers:")
+        if ticker_search:
+            filtered_tickers = [t for t in tickers if ticker_search.upper() in t]
+            display_tickers = filtered_tickers[:100] if len(filtered_tickers) > 100 else filtered_tickers
+        else:
+            popular = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
+            other_tickers = [t for t in tickers if t not in popular]
+            display_tickers = popular + other_tickers[:90]
+
+        selected_ticker = st.sidebar.selectbox("Select Stock", display_tickers)
+        
+        # Interval and Time Range Filters
+        st.sidebar.header("Chart Settings")
+        interval = st.sidebar.selectbox("Interval", ['1m', '15m', '1d'])
+        time_range = st.sidebar.selectbox("Time Range", ['1h', '1d', '1w'])
+
+        # Animation settings
+        st.sidebar.header("Animation Settings")
+        enable_animation = st.sidebar.checkbox("Enable Live Animation", value=True)
+        animation_speed = st.sidebar.slider("Animation Speed", min_value=0.1, max_value=2.0, value=0.5, step=0.1)
+        volatility = st.sidebar.slider("Volatility", min_value=0.0001, max_value=0.001, value=0.0003, step=0.0001)
+        
+        st.session_state.animation_speed = animation_speed
+
         # Load data buffer with enhanced error handling
         need_new_data = (
-            st.session_state.data_buffer is None or 
-            not st.session_state.buffer_loaded or 
-            'current_ticker' not in st.session_state or 
+            'data_buffer' not in st.session_state or
+            st.session_state.data_buffer is None or
+            'current_ticker' not in st.session_state or
             st.session_state.current_ticker != selected_ticker or
             'current_interval' not in st.session_state or
             st.session_state.current_interval != interval
         )
         
         if need_new_data:
-            with st.spinner(f"Loading {selected_ticker} data buffer..."):
+            with st.spinner(f"Loading {selected_ticker} data..."):
                 try:
-                    logger.info(f"Fetching new data for {selected_ticker}")
+                    logger.info(f"Fetching data for {selected_ticker} with interval {interval}")
                     data_buffer = get_stock_data_with_buffer(selected_ticker, interval)
                     
-                    if data_buffer is not None and not data_buffer.empty:
-                        logger.info(f"Received data with shape: {data_buffer.shape}")
-                    else:
-                        logger.error("Received empty data buffer")
-                    
-                    # Validate the data buffer
-                    if not validate_data_buffer(data_buffer, selected_ticker, interval):
+                    if data_buffer is None or data_buffer.empty:
+                        st.error(f"No data available for {selected_ticker}. Please try a different ticker or interval.")
                         return
                     
-                    # Safely filter data based on time range
-                    data_buffer = safe_filter_data(data_buffer, time_range)
+                    logger.info(f"Received data with shape: {data_buffer.shape}")
+                    logger.info(f"Data columns: {data_buffer.columns.tolist()}")
                     
-                    # Calculate indicators with error handling
-                    try:
-                        data_buffer = calculate_indicators(data_buffer)
-                    except Exception as e:
-                        st.warning("Error calculating technical indicators. Chart will show price data only.")
+                    # Calculate indicators
+                    data_buffer = calculate_indicators(data_buffer)
                     
-                    # Store buffer in session state
+                    # Store in session state
                     st.session_state.data_buffer = data_buffer
-                    st.session_state.buffer_loaded = True
                     st.session_state.current_ticker = selected_ticker
                     st.session_state.current_interval = interval
                     st.session_state.current_index = min(20, max(0, len(data_buffer) - 1))
                     
-                    # Update KPIs with error handling
-                    try:
-                        update_kpis(data_buffer, kpi_placeholder)
-                    except Exception as e:
-                        st.warning("Error updating KPIs. Some metrics may not be displayed correctly.")
-                        
+                    # Update KPIs
+                    update_kpis(data_buffer, kpi_placeholder)
+                    
                 except Exception as e:
-                    st.error(f"Error loading data for {selected_ticker}. Please try again or select a different ticker.")
-                    st.error(f"Details: {str(e)}")
+                    logger.error(f"Error loading data: {e}")
+                    st.error(f"Error loading data for {selected_ticker}. Please try again.")
                     return
-        
-        # Animation handling with error recovery
-        if enable_animation and st.session_state.data_buffer is not None and not st.session_state.data_buffer.empty:
-            st.session_state.is_animating = True
-            
-            try:
-                data_buffer = st.session_state.data_buffer
-                current_index = st.session_state.current_index
-                
-                animation_status.markdown("<p style='color:#00FF00; font-size:14px'>🔴 Live simulation running...</p>", 
-                                         unsafe_allow_html=True)
-                
-                # Initial display
-                try:
-                    frame = create_animation_frame(data_buffer, current_index)
-                    fig = create_interactive_chart(frame, selected_ticker, interval, is_animation_frame=True)
-                    chart_placeholder.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.warning("Error displaying initial chart. Retrying...")
-                    time.sleep(1)
-                
-                # Animation loop with error recovery
-                while enable_animation and st.session_state.is_animating:
-                    try:
-                        ticks = generate_simulated_ticks(data_buffer, num_ticks=10, 
-                                                       start_idx=current_index, volatility=volatility)
-                        
-                        for i, tick in enumerate(ticks):
-                            try:
-                                frame = create_animation_frame(data_buffer, current_index, i, tick)
-                                fig = create_interactive_chart(
-                                    frame, selected_ticker, interval, 
-                                    is_animation_frame=True,
-                                    last_price=tick['price'],
-                                    last_tick_time=tick['timestamp']
-                                )
-                                chart_placeholder.plotly_chart(fig, use_container_width=True)
-                                
-                                try:
-                                    update_quick_kpis(tick['price'], kpi_placeholder)
-                                except Exception as e:
-                                    logger.error(f"Error updating quick KPIs: {e}")
-                                
-                                time.sleep(st.session_state.animation_speed / len(ticks))
-                                
-                            except Exception as e:
-                                logger.error(f"Error in tick animation: {e}")
-                                continue
-                        
-                        # Safe index update
-                        current_index += 1
-                        if current_index >= len(data_buffer) - 1:
-                            current_index = max(0, len(data_buffer) - 20)
-                        
-                        st.session_state.current_index = current_index
-                        
-                        # Safe data refresh
-                        if current_index % 5 == 0:
-                            try:
-                                latest_quote = get_current_quote(selected_ticker)
-                                if latest_quote is not None:
-                                    update_quick_kpis(latest_quote['Close'], kpi_placeholder)
-                            except Exception as e:
-                                logger.error(f"Error fetching latest quote: {e}")
-                        
-                    except Exception as e:
-                        logger.error(f"Error in animation loop: {e}")
-                        time.sleep(1)  # Brief pause before retrying
-                        continue
-                    
-            except Exception as e:
-                st.warning("Animation encountered an error. Attempting to recover...")
-                time.sleep(1)
-            finally:
-                st.session_state.is_animating = False
-        else:
-            # Non-animated display with error handling
-            if st.session_state.data_buffer is not None and not st.session_state.data_buffer.empty:
-                try:
-                    fig = create_interactive_chart(st.session_state.data_buffer, selected_ticker, interval)
-                    chart_placeholder.plotly_chart(fig, use_container_width=True)
-                    
-                    update_kpis(st.session_state.data_buffer, kpi_placeholder)
-                    
-                    animation_status.markdown("<p style='color:#FFD700; font-size:14px'>Animation disabled. Enable in sidebar.</p>", 
-                                             unsafe_allow_html=True)
-                except Exception as e:
-                    st.error("Error displaying chart. Please try refreshing the page.")
+
+        # Display initial chart
+        try:
+            if not enable_animation:
+                fig = create_interactive_chart(st.session_state.data_buffer, selected_ticker, interval)
+                chart_placeholder.plotly_chart(fig, use_container_width=True)
+                animation_status.markdown("Animation disabled")
             else:
-                st.warning("No data available. Please try refreshing or selecting a different ticker.")
+                animation_status.markdown("🔴 Live simulation running...")
                 
+                while enable_animation:
+                    current_index = st.session_state.current_index
+                    frame = create_animation_frame(st.session_state.data_buffer, current_index)
+                    
+                    if frame is not None and not frame.empty:
+                        fig = create_interactive_chart(frame, selected_ticker, interval, is_animation_frame=True)
+                        chart_placeholder.plotly_chart(fig, use_container_width=True)
+                    
+                    time.sleep(animation_speed)
+                    
+                    # Update index
+                    current_index += 1
+                    if current_index >= len(st.session_state.data_buffer) - 1:
+                        current_index = 0
+                    st.session_state.current_index = current_index
+                    
+        except Exception as e:
+            logger.error(f"Error displaying chart: {e}")
+            st.error("Error displaying chart. Please try refreshing the page.")
+            
     except Exception as e:
-        st.error("An unexpected error occurred. Please refresh the page and try again.")
-        st.error(f"Details: {str(e)}")
+        logger.error(f"Main function error: {e}")
+        st.error("An unexpected error occurred. Please refresh the page.")
 
 if __name__ == "__main__":
     try:
