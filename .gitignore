@@ -43,4 +43,12 @@ yfinance_tickers.csv
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+
+# Streamlit cache
+.streamlit/cache/
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db 
