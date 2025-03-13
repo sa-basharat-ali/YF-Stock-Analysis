@@ -49,7 +49,7 @@ def get_session():
     return session
 
 # Fetch stock data with buffer
-@st.cache_data(ttl=60*60, show_spinner=False)  # Cache for 1 hour
+@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour
 def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
     """Fetch a day's worth of data to use as a buffer for animations"""
     try:
@@ -115,7 +115,7 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
         return pd.DataFrame()
 
 # Get current quote (just the latest data)
-@st.cache_data(ttl=15, show_spinner=False)  # Cache expires every 15 seconds
+@st.cache_data(ttl=15, show_spinner=False, max_entries=100)  # Cache expires every 15 seconds
 def get_current_quote(ticker):
     try:
         session = get_session()
@@ -129,7 +129,7 @@ def get_current_quote(ticker):
         return None
 
 # Fetch tickers (cached for 24 hours)
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, max_entries=1)  # Cache for 24 hours, only keep latest
 def get_tickers_cached(_session):
     try:
         if os.path.exists("yfinance_tickers.csv"):
@@ -169,7 +169,6 @@ def calculate_indicators(data):
     
     # Check if we have enough data points for calculation
     if len(data) < 26:  # Minimum 26 periods for MACD
-        # Not enough data, return original without attempting calculation
         return data
     
     try:
@@ -179,39 +178,37 @@ def calculate_indicators(data):
         # Ensure data types are correct
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
             if col in result_data.columns:
-                # Convert to numeric, coerce errors to NaN
                 result_data[col] = pd.to_numeric(result_data[col], errors='coerce')
         
-        # If we have NaN values after conversion, drop or fill them
-        if result_data.isna().any().any():
-            # Option 1: Drop rows with any NaN values
-            result_data = result_data.dropna()
-            
-            # If we no longer have enough data after dropping NaNs, return original
-            if len(result_data) < 26:
-                return data
+        # Drop any NaN values before calculation
+        result_data = result_data.dropna()
         
-        # Calculate indicators only if we have valid data
-        if not result_data.empty:
-            # Calculate MACD
-            result_data.ta.macd(fast=7, slow=25, signal=9, append=True)
+        if len(result_data) >= 26:
+            # Calculate MACD first
+            macd = result_data.ta.macd(fast=7, slow=25, signal=9)
+            if macd is not None:
+                # Ensure index alignment
+                macd = macd.reindex(result_data.index)
+                # Add MACD columns to result
+                for col in macd.columns:
+                    result_data[col] = macd[col]
             
             # Calculate RSI
-            result_data.ta.rsi(length=6, append=True)
+            rsi = result_data.ta.rsi(length=6)
+            if rsi is not None:
+                # Ensure index alignment
+                rsi = rsi.reindex(result_data.index)
+                result_data['RSI_6'] = rsi
             
-            # Clean up any NaN values that might have been introduced during calculation
-            result_data = result_data.fillna(method='ffill').fillna(method='bfill')
+            # Forward fill any remaining NaN values
+            result_data = result_data.fillna(method='ffill')
+            # Backward fill any remaining NaN values at the beginning
+            result_data = result_data.fillna(method='bfill')
             
-            return result_data
-        else:
-            return data
+        return result_data
             
     except Exception as e:
-        # Log the error but don't show warning during animation
-        if not st.session_state.get('is_animating', False):
-            st.warning(f"Failed to calculate indicators: {e}")
-        
-        # Return original data if calculation fails
+        print(f"Error calculating indicators: {e}")
         return data
 
 # Function to create live-like tick data
@@ -340,22 +337,31 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
         
         # If we have a tick, update the last candle
         if tick is not None and len(frame) > 0:
-            last_candle = frame.iloc[-1].copy()
-            updated_candle = update_candle_with_tick(last_candle, tick)
-            if updated_candle is not None:
-                frame.iloc[-1] = updated_candle
+            try:
+                last_candle = frame.iloc[-1].copy()
+                updated_candle = update_candle_with_tick(last_candle, tick)
+                if updated_candle is not None:
+                    # Ensure index alignment before updating
+                    if frame.index[-1] in data_buffer.index:
+                        frame.iloc[-1] = updated_candle
+            except Exception as e:
+                print(f"Error updating candle with tick: {e}")
         
         # Calculate indicators when needed
         indicator_cols = ['MACD_7_25_9', 'MACDs_7_25_9', 'MACDh_7_25_9', 'RSI_6']
         has_indicators = all(col in data_buffer.columns for col in indicator_cols)
         
         if has_indicators and len(frame) >= 26:
-            # Copy existing indicators from the buffer
-            for col in indicator_cols:
-                if col in data_buffer.columns:
-                    # Ensure index alignment
-                    common_index = frame.index.intersection(data_buffer.index)
-                    frame.loc[common_index, col] = data_buffer.loc[common_index, col]
+            try:
+                # Copy existing indicators from the buffer
+                for col in indicator_cols:
+                    if col in data_buffer.columns:
+                        # Get the common index between frame and data_buffer
+                        common_index = frame.index.intersection(data_buffer.index)
+                        # Only copy indicators for matching indices
+                        frame.loc[common_index, col] = data_buffer.loc[common_index, col]
+            except Exception as e:
+                print(f"Error copying indicators: {e}")
         
         return frame
         
