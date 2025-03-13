@@ -57,19 +57,21 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
         
         # Adjust period based on interval for better data availability
         if interval == '1m':
-            buffer_period = '2d'  # Fetch 2 days to ensure we have enough data
+            buffer_period = '5d'  # Fetch more historical data to ensure availability
         elif interval == '15m':
             buffer_period = '7d'
         elif interval == '1d':
             buffer_period = '60d'
         else:
-            buffer_period = '2d'
+            buffer_period = '5d'
             
         # Fetch data with retries
         for attempt in range(3):  # Try up to 3 times
             try:
-                data = yf.download(ticker, period=buffer_period, interval=interval, session=session)
-                break
+                data = yf.download(ticker, period=buffer_period, interval=interval, session=session, prepost=True)
+                if len(data) > 0:
+                    break
+                time.sleep(1)  # Wait before retrying
             except Exception as e:
                 if attempt == 2:  # Last attempt failed
                     st.error(f"Failed to fetch data after 3 attempts: {e}")
@@ -92,8 +94,23 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
             # Calculate technical indicators if enough data
             if len(data) >= 26:
                 try:
-                    data.ta.macd(fast=7, slow=25, signal=9, append=True)
-                    data.ta.rsi(length=6, append=True)
+                    # Create a copy for indicators to avoid modifying original data
+                    indicator_data = data.copy()
+                    
+                    # Calculate MACD
+                    macd = indicator_data.ta.macd(fast=7, slow=25, signal=9)
+                    if macd is not None:
+                        # Add MACD columns to result
+                        for col in macd.columns:
+                            data[col] = macd[col]
+                    
+                    # Calculate RSI
+                    rsi = indicator_data.ta.rsi(length=6)
+                    if rsi is not None:
+                        data['RSI_6'] = rsi
+                    
+                    # Forward fill any remaining NaN values
+                    data = data.fillna(method='ffill').fillna(method='bfill')
                 except Exception as e:
                     print(f"Error calculating indicators: {e}")
             
@@ -112,26 +129,29 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
         return pd.DataFrame()
 
 # Get current quote (just the latest data)
-@st.cache_data(ttl=30, show_spinner=False, max_entries=50)  # Cache for 30 seconds, keep last 50 entries
+@st.cache_data(ttl=30, show_spinner=False, max_entries=50)
 def get_current_quote(ticker):
+    """Get current stock quote with retries"""
     try:
         session = get_session()
         
-        # Try up to 3 times with exponential backoff
+        # Exponential backoff for retries
         for attempt in range(3):
             try:
-                data = yf.download(ticker, period='1d', interval='1m', session=session)
-                if len(data) > 0:
-                    if isinstance(data.columns, pd.MultiIndex):
-                        data.columns = data.columns.get_level_values(0)
-                    return data.iloc[-1]
-                time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                stock = yf.Ticker(ticker, session=session)
+                quote = stock.fast_info
+                if quote is not None:
+                    return quote
+                time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
             except Exception as e:
-                if attempt == 2:  # Last attempt
-                    print(f"Failed to fetch current quote after 3 attempts: {e}")
+                if attempt == 2:  # Last attempt failed
+                    print(f"Failed to fetch quote after 3 attempts: {e}")
                     return None
-                time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                time.sleep(2 ** attempt)
+                
+        print(f"No quote data available for {ticker}")
         return None
+        
     except Exception as e:
         print(f"Error in get_current_quote: {e}")
         return None
