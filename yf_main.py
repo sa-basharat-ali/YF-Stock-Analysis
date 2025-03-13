@@ -158,166 +158,130 @@ def calculate_rsi(data, periods=6):
 
 # Replace the calculate_indicators function
 def calculate_indicators(data):
+    """Calculate technical indicators"""
     if data.empty:
+        print("Empty data received in calculate_indicators")
         return data
     
     # Check if we have enough data points for calculation
     if len(data) < 26:  # Minimum 26 periods for MACD
+        print("Insufficient data points for indicator calculation")
         return data
     
     try:
         # Make a copy to avoid modifying the original dataframe
         result_data = data.copy()
         
-        # Ensure data types are correct
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            if col in result_data.columns:
-                result_data[col] = pd.to_numeric(result_data[col], errors='coerce')
+        # Calculate MACD
+        exp1 = result_data['Close'].ewm(span=7, adjust=False).mean()
+        exp2 = result_data['Close'].ewm(span=25, adjust=False).mean()
+        macd_line = exp1 - exp2
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        histogram = macd_line - signal_line
         
-        # Drop any NaN values before calculation
-        result_data = result_data.dropna()
+        result_data['MACD_7_25_9'] = macd_line
+        result_data['MACDs_7_25_9'] = signal_line
+        result_data['MACDh_7_25_9'] = histogram
         
-        if len(result_data) >= 26:
-            # Calculate MACD
-            macd_data = calculate_macd(result_data)
-            if not macd_data.empty:
-                result_data = pd.concat([result_data, macd_data], axis=1)
-            
-            # Calculate RSI
-            rsi_data = calculate_rsi(result_data)
-            if not rsi_data.empty:
-                result_data['RSI_6'] = rsi_data
-            
-            # Forward fill first
-            result_data = result_data.ffill()
-            # Then backward fill any remaining NaNs
-            result_data = result_data.bfill()
-            
+        # Calculate RSI
+        delta = result_data['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=6).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=6).mean()
+        rs = gain / loss
+        result_data['RSI_6'] = 100 - (100 / (1 + rs))
+        
+        # Forward fill any remaining NaN values
+        result_data = result_data.fillna(method='ffill')
+        # Backward fill any remaining NaN values at the beginning
+        result_data = result_data.fillna(method='bfill')
+        
+        print(f"Indicators calculated successfully. Shape: {result_data.shape}")
         return result_data
             
     except Exception as e:
-        logger.error(f"Error calculating indicators: {e}")
+        print(f"Error calculating indicators: {e}")
         return data
 
 # Enhanced fetch function with fallbacks
 @st.cache_data(ttl=60, show_spinner=False)
 def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
-    """Fetch a day's worth of data to use as a buffer for animations with robust error handling"""
-    logger.info(f"Fetching data for {ticker}, interval={interval}, period={period}")
+    """Fetch stock data with proper error handling"""
+    print(f"Fetching data for {ticker}, interval={interval}, period={period}")
     
-    # Adjust period based on interval for better data availability
-    if interval == '1m':
-        buffer_period = '5d'  # Fetch more historical data to ensure availability
-    elif interval == '15m':
-        buffer_period = '7d'
-    elif interval == '1d':
-        buffer_period = '60d'
-    else:
-        buffer_period = '5d'
-    
-    # Try different methods to get data
-    data = None
-    
-    # Method 1: Try direct yfinance download
-    for attempt in range(3):
-        try:
-            session = get_session()
-            logger.info(f"Attempt {attempt+1} using yf.download")
-            
-            data = yf.download(
-                ticker, 
-                period=buffer_period, 
-                interval=interval, 
-                session=session, 
-                prepost=True,
-                progress=False,
-                threads=False  # Disable multithreading which can cause issues
-            )
-            
-            if len(data) > 0:
-                logger.info(f"Success with yf.download: {len(data)} rows")
-                break
-                
-            logger.warning(f"Empty data from download method, retrying...")
-            time.sleep(2 ** attempt)  # Exponential backoff
-        except Exception as e:
-            logger.error(f"Error with yf.download: {e}")
-            time.sleep(2 ** attempt)  # Exponential backoff
-    
-    # Method 2: If download fails, try using Ticker.history()
-    if data is None or len(data) == 0:
+    try:
+        session = get_session()
+        
+        # Adjust period based on interval for better data availability
+        if interval == '1m':
+            buffer_period = '5d'
+        elif interval == '15m':
+            buffer_period = '7d'
+        elif interval == '1d':
+            buffer_period = '60d'
+        else:
+            buffer_period = '5d'
+        
+        # Try downloading data
         for attempt in range(3):
             try:
-                logger.info(f"Attempt {attempt+1} using Ticker.history()")
-                session = get_session()
-                
-                stock = yf.Ticker(ticker, session=session)
-                data = stock.history(period=buffer_period, interval=interval)
+                data = yf.download(
+                    ticker,
+                    period=buffer_period,
+                    interval=interval,
+                    session=session,
+                    prepost=True,
+                    progress=False,
+                    threads=False
+                )
                 
                 if len(data) > 0:
-                    logger.info(f"Success with Ticker.history: {len(data)} rows")
+                    print(f"Successfully downloaded {len(data)} rows of data")
                     break
                     
-                logger.warning(f"Empty data from Ticker.history, retrying...")
-                time.sleep(2 ** attempt)
+                print(f"Empty data received on attempt {attempt + 1}, retrying...")
+                time.sleep(2)
             except Exception as e:
-                logger.error(f"Error with Ticker.history: {e}")
-                time.sleep(2 ** attempt)
-    
-    # Method 3: Try to load from cache if API methods fail
-    if data is None or len(data) == 0:
-        logger.info("Trying to load from cache...")
-        data = load_from_cache(ticker, interval, period)
-        if data is not None and len(data) > 0:
-            st.info("Using cached data. Market data may not be current.")
-    
-    # Process and clean the data if we got something
-    if data is not None and len(data) > 0:
-        # Clean up column names if we have a MultiIndex
+                print(f"Error downloading data on attempt {attempt + 1}: {e}")
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    return pd.DataFrame()
+        
+        if len(data) == 0:
+            print("No data received after all attempts")
+            return pd.DataFrame()
+        
+        # Clean up column names
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         
-        # Make sure we have the required columns
+        # Verify we have all required columns
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-        
-        # Filter to only required columns if they exist
-        existing_cols = [col for col in required_cols if col in data.columns]
-        if len(existing_cols) == len(required_cols):
-            data = data[required_cols].copy()
-        else:
-            missing = [col for col in required_cols if col not in data.columns]
-            logger.error(f"Missing columns in data: {missing}")
-            st.warning(f"Data is missing required columns: {missing}")
+        if not all(col in data.columns for col in required_cols):
+            print(f"Missing columns. Available columns: {data.columns.tolist()}")
             return pd.DataFrame()
+        
+        # Keep only required columns
+        data = data[required_cols].copy()
         
         # Clean the data
-        data = data.ffill().bfill()
+        data = data.dropna()
         
-        # Ensure we have minimum required data
         if len(data) < 2:
-            st.warning(f"Insufficient data points for {ticker}. Try a different interval or time range.")
+            print("Insufficient data points after cleaning")
             return pd.DataFrame()
         
-        # Calculate technical indicators if enough data
-        if len(data) >= 26:
-            try:
-                data = calculate_indicators(data)
-            except Exception as e:
-                logger.error(f"Error calculating indicators: {e}")
+        # Calculate indicators
+        data = calculate_indicators(data)
         
-        # Save successful result to cache for future fallback
-        save_to_cache(ticker, interval, period, data)
+        print(f"Final data shape: {data.shape}")
+        print(f"Final columns: {data.columns.tolist()}")
         
         return data
-    
-    # If all methods failed, show appropriate message
-    st.warning(f"Unable to fetch data for {ticker}. Please try:")
-    st.markdown("""
-    - Refreshing the page
-    - Changing the time interval
-    - Selecting a different ticker
-    """)
-    return pd.DataFrame()
+        
+    except Exception as e:
+        print(f"Error in get_stock_data_with_buffer: {e}")
+        return pd.DataFrame()
 
 # Get current quote (just the latest data)
 @st.cache_data(ttl=30, show_spinner=False, max_entries=50)
@@ -464,56 +428,41 @@ def safe_filter_data(data_buffer, time_range):
         if len(data_buffer) < 2:
             return data_buffer
         
-        # Get the time range of available data
-        data_start = data_buffer.index[0]
-        data_end = data_buffer.index[-1]
-        total_minutes = (data_end - data_start).total_seconds() / 60
+        # Get the latest timestamp
+        end_time = data_buffer.index[-1]
         
-        # Check if we have enough data for the requested time range
-        if time_range == '1h' and total_minutes < 60:
-            st.warning("Less than 1 hour of data available. Using all available data.")
+        # Calculate start time based on time range
+        if time_range == '1h':
+            start_time = end_time - pd.Timedelta(hours=1)
+        elif time_range == '1d':
+            start_time = end_time - pd.Timedelta(days=1)
+        elif time_range == '1w':
+            start_time = end_time - pd.Timedelta(weeks=1)
+        else:
             return data_buffer
-        elif time_range == '1d' and total_minutes < 1440:
-            st.warning("Less than 1 day of data available. Using all available data.")
-            return data_buffer
-        elif time_range == '1w' and total_minutes < 10080:
-            st.warning("Less than 1 week of data available. Using all available data.")
-            return data_buffer
-            
-        # Calculate the start time based on the end time
-        end_time = data_end
         
-        try:
-            if time_range == '1h':
-                start_time = end_time - pd.Timedelta(hours=1)
-            elif time_range == '1d':
-                start_time = end_time - pd.Timedelta(days=1)
-            elif time_range == '1w':
-                start_time = end_time - pd.Timedelta(days=7)
-            else:
-                return data_buffer
-                
-            # Ensure start_time is not before the earliest available data
-            start_time = max(start_time, data_start)
-            
-            # Filter data
-            filtered_data = data_buffer.loc[start_time:end_time].copy()
-            
-            # Validate filtered data
-            if filtered_data.empty or len(filtered_data) < 2:
-                return data_buffer
-                
-            # Check for gaps in data
-            time_diff = pd.Series(filtered_data.index).diff()
-            if time_diff.max().total_seconds() > 300:  # Gap larger than 5 minutes
-                st.warning("Data may contain gaps. Some periods might be missing.")
-            
-            return filtered_data
-            
-        except pd.errors.OutOfBoundsDatetime:
+        # Filter data
+        filtered_data = data_buffer[data_buffer.index >= start_time].copy()
+        
+        # Validate filtered data
+        if filtered_data.empty or len(filtered_data) < 2:
+            st.warning("Insufficient data for selected time range. Using all available data.")
             return data_buffer
-            
-    except Exception:
+        
+        # Check for large gaps in data
+        time_diff = pd.Series(filtered_data.index).diff()
+        max_gap = time_diff.max().total_seconds() / 60  # Convert to minutes
+        
+        if max_gap > 5:  # Gap larger than 5 minutes
+            st.warning(f"Data contains gaps (max gap: {max_gap:.1f} minutes). Some periods might be missing.")
+        
+        # Recalculate indicators for the filtered data
+        filtered_data = calculate_indicators(filtered_data)
+        
+        return filtered_data
+        
+    except Exception as e:
+        logger.error(f"Error in safe_filter_data: {e}")
         return data_buffer
 
 # Enhanced data validation
@@ -710,125 +659,186 @@ def create_animation_frame(data_buffer, current_index, tick_index=None, tick=Non
 
 # Create Interactive Chart
 def create_interactive_chart(data, ticker, interval, is_animation_frame=False, last_price=None, last_tick_time=None):
+    """Create an interactive chart with candlesticks, volume, and indicators"""
     if data is None or data.empty or len(data) < 2:
-        # Only show error in non-animation mode to avoid flooding
         if not is_animation_frame:
             st.warning("Waiting for sufficient data to create chart...")
-            logger.error("No data available for chart creation")
         return go.Figure()
 
-    # Add debug logging
-    logger.info(f"Creating chart for {ticker} with {len(data)} data points")
-    logger.info(f"Data columns: {data.columns.tolist()}")
-    logger.info(f"First timestamp: {data.index[0]}, Last timestamp: {data.index[-1]}")
+    # Create figure with secondary y-axis
+    fig = make_subplots(rows=3, cols=1, 
+                       specs=[[{"type": "candlestick"}],
+                             [{"type": "bar"}],
+                             [{"type": "scatter"}]],
+                       vertical_spacing=0.08,  # Increased spacing between subplots
+                       row_heights=[0.5, 0.2, 0.3],  # Adjusted row heights
+                       subplot_titles=('Price', 'Volume', 'Indicators'))
 
-    has_indicators = all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'RSI_6'])
-    logger.info(f"Has indicators: {has_indicators}")
+    # Price Chart (Row 1)
+    candlestick = go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        increasing_line_color='#00FF00',
+        decreasing_line_color='#FF4040',
+        name="Price"
+    )
+    fig.add_trace(candlestick, row=1, col=1)
 
-    # Create figure with subplots
-    try:
-        fig = make_subplots(rows=3, cols=1, 
-                           specs=[[{"type": "candlestick"}],
-                                 [{"type": "bar"}],
-                                 [{"type": "scatter"}]],
-                           vertical_spacing=0.15,
-                           subplot_titles=('Candlestick', 'Volume', 'Indicators'))
+    # Add current price annotation if in animation mode
+    if is_animation_frame:
+        current_price = data['Close'].iloc[-1]
+        fig.add_annotation(
+            x=data.index[-1],
+            y=current_price,
+            text=f"${current_price:.2f}",
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1,
+            arrowwidth=2,
+            arrowcolor="#FFFFFF",
+            ax=50,
+            ay=0,
+            bordercolor="#FFFFFF",
+            borderwidth=1,
+            borderpad=4,
+            bgcolor="#000000",
+            opacity=0.8,
+            font=dict(size=12, color="#FFFFFF"),
+            row=1, col=1
+        )
 
-        # Candlestick Chart (Row 1)
-        candlestick = go.Candlestick(
+    # Volume Chart (Row 2)
+    colors = ['#00CED1' if row['Close'] >= row['Open'] else '#FF7F50' 
+             for _, row in data.iterrows()]
+    volume = go.Bar(
+        x=data.index,
+        y=data['Volume'],
+        marker_color=colors,
+        name='Volume'
+    )
+    fig.add_trace(volume, row=2, col=1)
+
+    # Indicators (Row 3)
+    if all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'RSI_6']):
+        # MACD
+        fig.add_trace(go.Scatter(
             x=data.index,
-            open=data['Open'],
-            high=data['High'],
-            low=data['Low'],
-            close=data['Close'],
-            increasing_line_color='#00FF00',
-            decreasing_line_color='#FF4040',
-            name="Price"
-        )
-        fig.add_trace(candlestick, row=1, col=1)
-
-        # Volume Chart (Row 2)
-        colors = ['#00CED1' if row['Close'] >= row['Open'] else '#FF7F50' for _, row in data.iterrows()]
-        volume = go.Bar(
+            y=data['MACD_7_25_9'],
+            line=dict(color='#1E90FF', width=2),
+            name='MACD'
+        ), row=3, col=1)
+        
+        fig.add_trace(go.Scatter(
             x=data.index,
-            y=data['Volume'],
-            marker_color=colors,
-            opacity=0.7,
-            name='Volume'
+            y=data['MACDs_7_25_9'],
+            line=dict(color='#FF4500', width=2),
+            name='Signal'
+        ), row=3, col=1)
+        
+        fig.add_trace(go.Bar(
+            x=data.index,
+            y=data['MACDh_7_25_9'],
+            marker_color='#A9A9A9',
+            name='Histogram'
+        ), row=3, col=1)
+
+        # RSI
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=data['RSI_6'],
+            line=dict(color='#FFFF00', width=2),
+            name='RSI'
+        ), row=3, col=1)
+
+        # Add overbought/oversold lines
+        fig.add_hline(y=70, line=dict(color='#FF0000', width=1, dash='dash'), row=3, col=1)
+        fig.add_hline(y=30, line=dict(color='#00FF00', width=1, dash='dash'), row=3, col=1)
+        
+        # Add overbought/oversold labels
+        fig.add_annotation(
+            x=data.index[0], y=70,
+            text="OVERBOUGHT 70",
+            showarrow=False,
+            font=dict(color='#FF0000', size=10),
+            xanchor='left',
+            row=3, col=1
         )
-        fig.add_trace(volume, row=2, col=1)
-
-        # Indicators (Row 3)
-        if has_indicators:
-            # MACD
-            fig.add_trace(go.Scatter(
-                x=data.index,
-                y=data['MACD_7_25_9'],
-                mode='lines',
-                line=dict(color='#1E90FF', width=2),
-                name='MACD'
-            ), row=3, col=1)
-            
-            fig.add_trace(go.Scatter(
-                x=data.index,
-                y=data['MACDs_7_25_9'],
-                mode='lines',
-                line=dict(color='#FF4500', width=2),
-                name='Signal'
-            ), row=3, col=1)
-            
-            fig.add_trace(go.Bar(
-                x=data.index,
-                y=data['MACDh_7_25_9'],
-                marker_color='#A9A9A9',
-                name='Histogram'
-            ), row=3, col=1)
-
-            # RSI
-            fig.add_trace(go.Scatter(
-                x=data.index,
-                y=data['RSI_6'],
-                mode='lines',
-                line=dict(color='#FFFF00', width=2),
-                name='RSI'
-            ), row=3, col=1)
-
-        # Update layout
-        fig.update_layout(
-            title=dict(
-                text=f"{ticker} - {interval.upper()} Data",
-                x=0.5,
-                font=dict(size=24, color='#FFD700')
-            ),
-            template='plotly_dark',
-            paper_bgcolor='rgba(0, 0, 20, 0.9)',
-            plot_bgcolor='rgba(0, 0, 30, 0.7)',
-            xaxis_rangeslider_visible=False,
-            height=800,
-            showlegend=True,
-            hovermode='x unified'
+        fig.add_annotation(
+            x=data.index[0], y=30,
+            text="OVERSOLD 30",
+            showarrow=False,
+            font=dict(color='#00FF00', size=10),
+            xanchor='left',
+            row=3, col=1
         )
 
-        # Update axes
-        for i in range(1, 4):
-            fig.update_xaxes(
-                gridcolor='rgba(255, 255, 255, 0.2)',
-                zeroline=False,
-                row=i,
-                col=1
-            )
-            fig.update_yaxes(
-                gridcolor='rgba(255, 255, 255, 0.2)',
-                zeroline=False,
-                row=i,
-                col=1
-            )
+    # Update layout
+    title_text = f"{ticker} - {interval.upper()} Data{'🔴 LIVE' if is_animation_frame else ''}"
+    fig.update_layout(
+        title=dict(
+            text=title_text,
+            x=0.5,
+            y=0.98,
+            xanchor='center',
+            yanchor='top',
+            font=dict(size=20, color='#FFD700')
+        ),
+        template='plotly_dark',
+        paper_bgcolor='rgba(0, 0, 20, 0.9)',
+        plot_bgcolor='rgba(0, 0, 30, 0.7)',
+        xaxis_rangeslider_visible=False,
+        height=800,
+        showlegend=True,
+        legend=dict(
+            x=1.0,
+            y=1.0,
+            bgcolor='rgba(0,0,0,0.5)',
+            bordercolor='#FFFFFF',
+            font=dict(color='#FFFFFF')
+        ),
+        margin=dict(l=50, r=50, t=80, b=50)  # Increased top margin
+    )
 
-        return fig
+    # Update axes with improved styling
+    for i in range(1, 4):
+        # Common axis properties
+        axis_props = dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgba(128, 128, 128, 0.2)',
+            zeroline=False,
+            showline=True,
+            linewidth=1,
+            linecolor='rgba(128, 128, 128, 0.5)',
+        )
+        
+        # X-axis updates
+        fig.update_xaxes(
+            **axis_props,
+            row=i, col=1,
+            rangeslider_visible=False,  # Disable rangeslider for all subplots
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),  # Hide weekends
+                dict(bounds=[20, 9], pattern="hour"),  # Hide non-trading hours
+            ] if i == 1 else None  # Only apply rangebreaks to main price chart
+        )
+        
+        # Y-axis updates
+        fig.update_yaxes(
+            **axis_props,
+            row=i, col=1,
+            side='right' if i == 3 else 'left'  # Move indicator y-axis to right
+        )
 
-    except Exception as e:
-        logger.error(f"Error creating interactive chart: {e}")
-        return go.Figure()
+    # Update subplot titles with better styling
+    for i in fig['layout']['annotations']:
+        i['font'] = dict(size=12, color='#FFFFFF')
+        i['y'] = i['y'] - 0.03  # Move titles up slightly
+
+    return fig
 
 # Enhanced error handling for main function
 def main():
