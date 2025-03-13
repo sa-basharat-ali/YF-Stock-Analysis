@@ -9,7 +9,6 @@ import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import pandas_ta as ta
 import os
 import copy
 from scipy.interpolate import interp1d
@@ -763,7 +762,59 @@ def get_tickers_cached(_session):
         logger.error(f"Error fetching tickers: {e}")
         return ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
 
-# Calculate MACD and RSI using pandas_ta with improved error handling
+# Custom implementation of technical indicators
+def calculate_macd(data, fast=7, slow=25, signal=9):
+    """Calculate MACD using pandas EMA"""
+    try:
+        # Calculate the short and long EMAs
+        ema_short = data['Close'].ewm(span=fast, adjust=False).mean()
+        ema_long = data['Close'].ewm(span=slow, adjust=False).mean()
+        
+        # Calculate MACD line
+        macd_line = ema_short - ema_long
+        
+        # Calculate signal line
+        signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+        
+        # Calculate histogram
+        histogram = macd_line - signal_line
+        
+        return pd.DataFrame({
+            'MACD_7_25_9': macd_line,
+            'MACDs_7_25_9': signal_line,
+            'MACDh_7_25_9': histogram
+        })
+    except Exception as e:
+        logger.error(f"Error calculating MACD: {e}")
+        return pd.DataFrame()
+
+def calculate_rsi(data, periods=6):
+    """Calculate RSI using pandas"""
+    try:
+        # Calculate price changes
+        delta = data['Close'].diff()
+        
+        # Get gains and losses
+        gains = delta.copy()
+        losses = delta.copy()
+        gains[gains < 0] = 0
+        losses[losses > 0] = 0
+        losses = abs(losses)
+        
+        # Calculate average gains and losses
+        avg_gains = gains.ewm(alpha=1/periods, adjust=False).mean()
+        avg_losses = losses.ewm(alpha=1/periods, adjust=False).mean()
+        
+        # Calculate RS and RSI
+        rs = avg_gains / avg_losses
+        rsi = 100 - (100 / (1 + rs))
+        
+        return pd.Series(rsi, name='RSI_6')
+    except Exception as e:
+        logger.error(f"Error calculating RSI: {e}")
+        return pd.Series(dtype=float)
+
+# Replace the calculate_indicators function
 def calculate_indicators(data):
     if data.empty:
         return data
@@ -785,21 +836,15 @@ def calculate_indicators(data):
         result_data = result_data.dropna()
         
         if len(result_data) >= 26:
-            # Calculate MACD first
-            macd = result_data.ta.macd(fast=7, slow=25, signal=9)
-            if macd is not None:
-                # Ensure index alignment
-                macd = macd.reindex(result_data.index)
-                # Add MACD columns to result
-                for col in macd.columns:
-                    result_data[col] = macd[col]
+            # Calculate MACD
+            macd_data = calculate_macd(result_data)
+            if not macd_data.empty:
+                result_data = pd.concat([result_data, macd_data], axis=1)
             
             # Calculate RSI
-            rsi = result_data.ta.rsi(length=6)
-            if rsi is not None:
-                # Ensure index alignment
-                rsi = rsi.reindex(result_data.index)
-                result_data['RSI_6'] = rsi
+            rsi_data = calculate_rsi(result_data)
+            if not rsi_data.empty:
+                result_data['RSI_6'] = rsi_data
             
             # Forward fill first
             result_data = result_data.ffill()
