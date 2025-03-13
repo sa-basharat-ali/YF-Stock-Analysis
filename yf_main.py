@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from fix_imports import NaN  # Add compatibility for older pandas-ta
+from numpy import nan as NaN  # Direct import from numpy
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
