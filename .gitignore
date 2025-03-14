@@ -49,6 +49,10 @@ yfinance_tickers.csv
 .streamlit/cache/
 .streamlit/secrets.toml
 
+# Data files
+*.csv
+*.json
+
 # OS
 .DS_Store
 Thumbs.db 
