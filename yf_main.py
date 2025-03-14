@@ -109,35 +109,6 @@ def get_session():
     
     return session
 
-# Simple file-based cache for fallback
-def save_to_cache(ticker, interval, period, data):
-    """Save data to a cache file"""
-    try:
-        cache_dir = '/tmp/streamlit_cache'  # Use /tmp for Streamlit Cloud
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        cache_file = f"{cache_dir}/{ticker}_{interval}_{period}.csv"
-        data.to_csv(cache_file)
-        logger.info(f"Saved data to cache: {cache_file}")
-        return True
-    except Exception as e:
-        logger.error(f"Error saving cache: {e}")
-        return False
-
-def load_from_cache(ticker, interval, period):
-    """Load data from cache file"""
-    try:
-        cache_file = f"/tmp/streamlit_cache/{ticker}_{interval}_{period}.csv"  # Use /tmp for Streamlit Cloud
-        if os.path.exists(cache_file):
-            file_age = time.time() - os.path.getmtime(cache_file)
-            if file_age < 86400:  # 24 hours in seconds
-                data = pd.read_csv(cache_file, index_col=0, parse_dates=True)
-                logger.info(f"Loaded from cache: {cache_file}")
-                return data
-    except Exception as e:
-        logger.error(f"Error loading from cache: {e}")
-    return None
-
 # Custom implementation of technical indicators
 def calculate_macd(data, fast=7, slow=25, signal=9):
     """Calculate MACD using pandas EMA"""
@@ -229,27 +200,39 @@ def calculate_indicators(data):
         return data
 
 # Enhanced fetch function with fallbacks
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)  # 5 minutes cache
 def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
-    logger.info(f"Cache miss for {ticker}, {interval}, {period} - fetching new data")
-    
-    cached_data = load_from_cache(ticker, interval, period)
-    if cached_data is not None and not cached_data.empty:
-        logger.info(f"Using cached data for {ticker}, {interval}, {period}")
-        return cached_data
+    """Fetch stock data with improved caching"""
+    logger.info(f"Fetching data for {ticker}, {interval}, {period}")
     
     try:
         session = get_session()
         
-        if interval == '1m':
-            if period not in ['1d', '7d']:
-                logger.info("1-minute interval is limited to 7 days. Setting time range to 1w.")
-                period = '7d'
-        elif interval == '15m':
-            if period not in ['1d', '7d']:
-                logger.info("15-minute interval is limited to 7 days. Setting time range to 1w.")
-                period = '7d'
+        # Define valid interval-period combinations
+        valid_combinations = {
+            '1m': ['1d', '7d'],
+            '2m': ['1d', '7d', '60d'],
+            '5m': ['1d', '7d', '60d'],
+            '15m': ['1d', '7d', '60d'],
+            '30m': ['1d', '7d', '60d'],
+            '60m': ['1d', '7d', '60d'],
+            '90m': ['1d', '7d', '60d', '1mo'],
+            '1h': ['1d', '7d', '60d', '1mo'],
+            '1d': ['7d', '60d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'],
+            '5d': ['1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'],
+            '1wk': ['1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'],
+            '1mo': ['3mo', '6mo', '1y', '2y', '5y', 'max'],
+            '3mo': ['6mo', '1y', '2y', '5y', 'max']
+        }
+
+        # Validate and adjust interval-period combination
+        if interval in valid_combinations:
+            if period not in valid_combinations[interval]:
+                suggested_period = valid_combinations[interval][0]
+                logger.warning(f"{interval} interval works best with these periods: {valid_combinations[interval]}. Using {suggested_period}.")
+                period = suggested_period
         
+        # Download data with retries
         for attempt in range(3):
             try:
                 data = yf.download(
@@ -266,82 +249,66 @@ def get_stock_data_with_buffer(ticker, interval='1m', period='1d'):
                     logger.info(f"Successfully downloaded {len(data)} rows of data")
                     break
                 
-                logger.info(f"Empty data received on attempt {attempt + 1}, retrying...")
+                logger.warning(f"Empty data received on attempt {attempt + 1}, retrying...")
                 time.sleep(2)
             except Exception as e:
                 logger.error(f"Error downloading data on attempt {attempt + 1}: {e}")
                 if attempt < 2:
                     time.sleep(2)
                 else:
-                    if interval == '1m':
-                        logger.info("Falling back to 15m interval due to repeated failures")
-                        st.warning("1-minute data unavailable. Falling back to 15-minute data.")
-                        interval = '15m'
-                        period = '7d'
-                        continue
-                    else:
-                        if 'unauthorized' in str(e).lower():
-                            st.error(f"Unable to fetch {interval} data. This may be due to API restrictions.")
-                        return pd.DataFrame()
+                    return pd.DataFrame()
         
         if len(data) == 0:
-            st.warning(f"No data available for {ticker} with {interval} interval. Try a different ticker or interval.")
+            logger.warning(f"No data available for {ticker}")
             return pd.DataFrame()
         
+        # Clean up column names if multi-index
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         
+        # Validate required columns
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
         if not all(col in data.columns for col in required_cols):
             logger.error(f"Missing columns. Available columns: {data.columns.tolist()}")
             return pd.DataFrame()
         
+        # Keep only required columns and remove any NaN values
         data = data[required_cols].copy()
         data = data.dropna()
         
         if len(data) < 2:
-            st.warning("Insufficient data points. Try a different time range or interval.")
+            logger.warning("Insufficient data points")
             return pd.DataFrame()
         
+        # Calculate indicators only once
         data = calculate_indicators(data)
         
+        # Log data information
         logger.info(f"Final data shape: {data.shape}")
-        logger.info(f"Final columns: {data.columns.tolist()}")
         logger.info(f"Time range: {data.index[0]} to {data.index[-1]}")
+        logger.info(f"Columns: {data.columns.tolist()}")
         
-        save_to_cache(ticker, interval, period, data)
         return data
     
     except Exception as e:
         logger.error(f"Error in get_stock_data_with_buffer: {e}")
-        st.error(f"Error fetching data: {str(e)}")
-        cached_data = load_from_cache(ticker, interval, period)
-        if cached_data is not None and not cached_data.empty:
-            logger.info(f"Falling back to cached data for {ticker}, {interval}, {period}")
-            return cached_data
         return pd.DataFrame()
 
-@st.cache_data(ttl=30, show_spinner=False, max_entries=50)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_current_quote(ticker):
+    """Get current quote with proper serialization"""
     try:
-        session = get_session()
-        
-        for attempt in range(3):
-            try:
-                stock = yf.Ticker(ticker, session=session)
-                quote = stock.fast_info
-                if quote is not None:
-                    return quote
-                time.sleep(2 ** attempt)
-            except Exception as e:
-                if attempt == 2:
-                    logger.error(f"Failed to fetch quote after 3 attempts: {e}")
-                    return None
-                time.sleep(2 ** attempt)
-                
-        logger.warning(f"No quote data available for {ticker}")
+        stock = yf.Ticker(ticker)
+        info = stock.fast_info
+        if info is not None:
+            # Convert FastInfo object to dictionary
+            quote_data = {
+                'last_price': getattr(info, 'last_price', None),
+                'volume': getattr(info, 'volume', None),
+                'timezone': getattr(info, 'timezone', None)
+            }
+            return quote_data
         return None
-        
     except Exception as e:
         logger.error(f"Error in get_current_quote: {e}")
         return None
@@ -637,23 +604,26 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
                        row_heights=[0.5, 0.2, 0.3],
                        subplot_titles=('Price', 'Volume', 'Indicators'))
 
+    # Add candlestick chart
     candlestick = go.Candlestick(
         x=data.index,
         open=data['Open'],
         high=data['High'],
         low=data['Low'],
         close=data['Close'],
-        increasing=dict(line=dict(color='#00FF00'), fillcolor='#00FF00'),
-        decreasing=dict(line=dict(color='#FF4040'), fillcolor='#FF4040'),
+        increasing=dict(line=dict(color='#00FF00', width=1), fillcolor='#00FF00'),
+        decreasing=dict(line=dict(color='#FF4040', width=1), fillcolor='#FF4040'),
         name="Price"
     )
     fig.add_trace(candlestick, row=1, col=1)
 
-    if is_animation_frame and len(data) > 0 and last_price is not None:
+    # Add last price annotation
+    if is_animation_frame and len(data) > 0:
+        current_price = last_price if last_price is not None else data['Close'].iloc[-1]
         fig.add_annotation(
             x=last_tick_time or data.index[-1],
-            y=last_price,
-            text=f"${last_price:.2f}",
+            y=current_price,
+            text=f"${current_price:.2f}",
             showarrow=True,
             arrowhead=2,
             arrowsize=1,
@@ -670,6 +640,7 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             row=1, col=1
         )
 
+    # Add volume bars
     colors = ['#00CED1' if row['Close'] >= row['Open'] else '#FF7F50'
              for _, row in data.iterrows()]
     volume = go.Bar(
@@ -681,7 +652,9 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
     )
     fig.add_trace(volume, row=2, col=1)
 
+    # Add indicators
     if all(col in data.columns for col in ['MACD_7_25_9', 'MACDs_7_25_9', 'RSI_6']):
+        # MACD
         fig.add_trace(go.Scatter(
             x=data.index,
             y=data['MACD_7_25_9'],
@@ -696,13 +669,16 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             name='Signal'
         ), row=3, col=1)
         
+        # MACD Histogram
+        colors = ['#00CED1' if val >= 0 else '#FF7F50' for val in data['MACDh_7_25_9']]
         fig.add_trace(go.Bar(
             x=data.index,
             y=data['MACDh_7_25_9'],
-            marker_color='#A9A9A9',
+            marker_color=colors,
             name='Histogram'
         ), row=3, col=1)
 
+        # RSI
         fig.add_trace(go.Scatter(
             x=data.index,
             y=data['RSI_6'],
@@ -710,28 +686,11 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             name='RSI'
         ), row=3, col=1)
 
+        # Add RSI levels
         fig.add_hline(y=70, line=dict(color='#FF0000', width=1, dash='dash'), row=3, col=1)
         fig.add_hline(y=30, line=dict(color='#00FF00', width=1, dash='dash'), row=3, col=1)
-        
-        fig.add_annotation(
-            x=data.index[0], y=70,
-            text="OVERBOUGHT 70",
-            showarrow=False,
-            font=dict(color='#FF0000', size=10),
-            xanchor='left',
-            yanchor='bottom',
-            row=3, col=1
-        )
-        fig.add_annotation(
-            x=data.index[0], y=30,
-            text="OVERSOLD 30",
-            showarrow=False,
-            font=dict(color='#00FF00', size=10),
-            xanchor='left',
-            yanchor='top',
-            row=3, col=1
-        )
 
+    # Update layout
     title_text = f"{ticker} - {interval.upper()} Data{' 🔴 LIVE' if is_animation_frame else ''}"
     fig.update_layout(
         title=dict(
@@ -755,9 +714,11 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             bordercolor='#FFFFFF',
             font=dict(color='#FFFFFF')
         ),
-        margin=dict(l=50, r=50, t=80, b=50)
+        margin=dict(l=50, r=50, t=80, b=50),
+        uirevision=True  # This helps maintain zoom level during updates
     )
 
+    # Update axes
     for i in range(1, 4):
         axis_props = dict(
             showgrid=True,
@@ -769,16 +730,18 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             linecolor='rgba(128, 128, 128, 0.5)',
         )
         
+        # X-axis configuration
         fig.update_xaxes(
             **axis_props,
             row=i, col=1,
             rangeslider_visible=False,
             rangebreaks=[
-                dict(bounds=["sat", "mon"]),
-                dict(bounds=[20, 9], pattern="hour"),
-            ] if interval != '1d' else [dict(bounds=["sat", "mon"])]
+                dict(bounds=["sat", "mon"]),  # Hide weekends
+                dict(bounds=[20, 9], pattern="hour") if interval not in ['1d', '5d', '1wk', '1mo', '3mo'] else None
+            ]
         )
         
+        # Y-axis configuration
         fig.update_yaxes(
             **axis_props,
             row=i, col=1,
@@ -786,10 +749,6 @@ def create_interactive_chart(data, ticker, interval, is_animation_frame=False, l
             tickfont=dict(size=10),
             title_font=dict(size=12)
         )
-
-    for i in fig['layout']['annotations']:
-        i['font'] = dict(size=12, color='#FFFFFF')
-        i['y'] = i['y'] - 0.03
 
     return fig
 
