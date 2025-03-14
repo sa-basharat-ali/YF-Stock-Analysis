@@ -779,12 +779,36 @@ def main():
             display_tickers = popular + other_tickers[:90]
         
         selected_ticker = st.sidebar.selectbox("Select Stock", display_tickers)
-        interval = st.sidebar.selectbox("Interval", ['1m', '15m', '1d'])
-        time_range = st.sidebar.selectbox("Time Range", ['1h', '1d', '1w'])
+        
+        # Define valid interval-period combinations
+        interval_periods = {
+            '1m': ['1d', '7d'],
+            '2m': ['1d', '7d', '60d'],
+            '5m': ['1d', '7d', '60d'],
+            '15m': ['1d', '7d', '60d'],
+            '30m': ['1d', '7d', '60d'],
+            '60m': ['1d', '7d', '60d'],
+            '1h': ['1d', '7d', '60d', '1mo'],
+            '1d': ['7d', '60d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max'],
+        }
+        
+        # Update interval selection based on valid combinations
+        interval = st.sidebar.selectbox(
+            "Interval",
+            options=list(interval_periods.keys()),
+            index=2  # Default to 5m
+        )
+        
+        # Update period selection based on selected interval
+        period = st.sidebar.selectbox(
+            "Period",
+            options=interval_periods[interval],
+            index=0  # Default to first valid period
+        )
         
         # Animation settings
         st.sidebar.header("Animation Settings")
-        enable_animation = st.sidebar.checkbox("Enable Live Animation", value=True, key="enable_animation")
+        enable_animation = st.sidebar.checkbox("Enable Live Animation", value=True)
         animation_speed = st.sidebar.slider("Animation Speed", min_value=0.1, max_value=2.0, value=0.5, step=0.1)
         volatility = st.sidebar.slider("Volatility", min_value=0.0001, max_value=0.001, value=0.0003, step=0.0001)
         
@@ -793,7 +817,7 @@ def main():
         # Add a stop button for animation
         if enable_animation:
             if st.sidebar.button("Stop Animation"):
-                st.session_state.enable_animation = False
+                st.session_state.is_animating = False
                 st.rerun()
         
         # Load data buffer
@@ -803,12 +827,14 @@ def main():
             'current_ticker' not in st.session_state or
             st.session_state.current_ticker != selected_ticker or
             'current_interval' not in st.session_state or
-            st.session_state.current_interval != interval
+            st.session_state.current_interval != interval or
+            'current_period' not in st.session_state or
+            st.session_state.current_period != period
         )
         
         if need_new_data:
             with st.spinner(f"Loading {selected_ticker} data..."):
-                data_buffer = get_stock_data_with_buffer(selected_ticker, interval)
+                data_buffer = get_stock_data_with_buffer(selected_ticker, interval, period)
                 
                 if data_buffer is None or data_buffer.empty:
                     st.error(f"No data available for {selected_ticker}. Please try a different ticker or interval.")
@@ -817,20 +843,17 @@ def main():
                 st.session_state.data_buffer = data_buffer
                 st.session_state.current_ticker = selected_ticker
                 st.session_state.current_interval = interval
-                st.session_state.current_index = min(20, max(0, len(data_buffer) - 1))
+                st.session_state.current_period = period
+                st.session_state.current_index = 0
                 st.session_state.last_update = time.time()
+                st.session_state.buffer_loaded = True
                 
                 # Update KPIs
                 update_kpis(data_buffer, kpi_placeholder)
         
-        # Filter data based on time range
-        filtered_data = safe_filter_data(st.session_state.data_buffer, time_range)
-        if filtered_data.empty:
-            st.warning("No data available for the selected time range.")
+        # Validate data buffer
+        if not validate_data_buffer(st.session_state.data_buffer, selected_ticker, interval):
             return
-        
-        # Update session state with filtered data
-        st.session_state.data_buffer = filtered_data
         
         # Display chart
         if not enable_animation:
@@ -839,36 +862,57 @@ def main():
             animation_status.markdown("Animation disabled")
         else:
             animation_status.markdown("🔴 Live simulation running...")
-            chart_container = chart_placeholder.empty()
             
             current_time = time.time()
             if 'last_update' not in st.session_state or (current_time - st.session_state.last_update) >= animation_speed:
                 current_index = st.session_state.current_index
+                data_length = len(st.session_state.data_buffer)
+                
+                if current_index >= data_length - 1:
+                    current_index = 0
+                    # Refresh data when animation loops
+                    data_buffer = get_stock_data_with_buffer(selected_ticker, interval, period)
+                    if data_buffer is not None and not data_buffer.empty:
+                        st.session_state.data_buffer = data_buffer
                 
                 # Generate simulated ticks for smooth animation
-                ticks = generate_simulated_ticks(st.session_state.data_buffer, num_ticks=5, start_idx=current_index, volatility=volatility)
+                ticks = generate_simulated_ticks(
+                    st.session_state.data_buffer,
+                    num_ticks=5,
+                    start_idx=current_index,
+                    volatility=volatility
+                )
                 
                 if ticks:
                     for tick in ticks:
-                        frame = create_animation_frame(st.session_state.data_buffer, current_index, tick=tick)
+                        frame = create_animation_frame(
+                            st.session_state.data_buffer,
+                            current_index,
+                            tick=tick
+                        )
                         if frame is not None and not frame.empty:
-                            fig = create_interactive_chart(frame, selected_ticker, interval, is_animation_frame=True, last_price=tick['price'], last_tick_time=tick['timestamp'])
-                            chart_container.plotly_chart(fig, use_container_width=True)
-                            st.session_state.last_update = time.time()
+                            fig = create_interactive_chart(
+                                frame,
+                                selected_ticker,
+                                interval,
+                                is_animation_frame=True,
+                                last_price=tick['price'],
+                                last_tick_time=tick['timestamp']
+                            )
+                            chart_placeholder.plotly_chart(fig, use_container_width=True)
                             time.sleep(animation_speed / len(ticks))
-                            st.rerun()
                 
-                current_index += 1
-                if current_index >= len(st.session_state.data_buffer) - 1:
-                    current_index = 0
-                st.session_state.current_index = current_index
+                st.session_state.current_index = current_index + 1
                 st.session_state.last_update = current_time
                 
-                st.rerun()
+                if enable_animation:
+                    time.sleep(0.1)  # Small delay to prevent excessive updates
+                    st.rerun()
     
     except Exception as e:
         logger.error(f"Main function error: {e}")
         st.error("An unexpected error occurred. Please refresh the page.")
+        st.error(f"Details: {str(e)}")
 
 if __name__ == "__main__":
     try:
