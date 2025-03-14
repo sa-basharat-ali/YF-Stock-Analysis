@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: yf-stock-analysis
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run yf_main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: STREAMLIT_SERVER_PORT
+        value: 8501
+      - key: STREAMLIT_SERVER_ADDRESS
+        value: 0.0.0.0 
